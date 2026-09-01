@@ -24,10 +24,20 @@ an unapproved waiver does not weaken anything, because the code computing "what 
 ignores it.
 
 **Approved state has a fingerprint.** `governance/baseline.txt` records a digest of the
-governed content — every constraint's rule, check, status and waiver, plus the goal
-statement, criteria and out-of-scope list, plus the source of the tools themselves.
-`validate.py` recomputes and compares. Any change to a rule, a criterion, or the checking
-tools without a matching approval shows up as an error.
+governed content, in four areas:
+
+- `constraints` — every constraint's rule, check, status and waiver;
+- `goal` — the goal statement, criteria and out-of-scope list, plus the **non-goals** from
+  `goals/outcomes.md` (they are the scope guard, so they are governed even though they live
+  in the outcomes file);
+- `tools` — the source of the checking tools themselves (`constraint_files.py`,
+  `validate.py`, `approve.py`, `brief.py`, `status.py`);
+- `trust` — `governance/approvers.txt` and `governance/allowed_signers`, the files that
+  decide whose approvals and signatures count. Without this, an agent could add its own
+  address or key and approve as itself with nothing showing as drift.
+
+`validate.py` recomputes and compares. Any change to a rule, a criterion, a non-goal, the
+checking tools, or the trust roots without a matching approval shows up as an error.
 
 The digest deliberately excludes each criterion's `state:` and `evidence:`, and the
 goal's own `state:`. Those change constantly during normal work. The finish line is
@@ -58,6 +68,43 @@ re-records the baseline, and commits with `APPROVED: P-000N` in the message.
 Governance engages when Clara runs `tools/approve.py --baseline`, which requires the goal
 condition to be approved. Before that — during intake — everything is fluid, which is
 correct: there is no agreed finish line yet to protect.
+
+## Delegated approval
+
+Clara does not have to type the approval command herself every time. She can tell the
+agent, in the session, to run it for her — "yes, approve P-0001" — and the agent runs:
+
+```
+python3 tools/approve.py P-0001 --on-behalf-of-clara "yes, approve P-0001"
+```
+
+This does three things beyond a normal approval:
+
+- it writes her authorization verbatim into the commit body as `ON-BEHALF-OF-CLARA: "…"`;
+- it appends a dated entry to `progress/log.md` recording the delegation;
+- it makes `validate.py` list the approval, on every run, as **agent-executed on Clara's
+  stated authority**, so she can confirm she actually said so.
+
+Be clear-eyed about what this is and is not. It converts approval from something only
+Clara's hands can do into something the agent can do **on her explicit say-so** — and it
+makes every such approval loud, logged, and flagged rather than silent. That directly
+addresses the failure mode at the top of this document: an agent *quietly* moving the bar.
+What it does **not** do, in attribution mode, is prove the authorization was real. The
+agent writes the quote; a determined agent could fabricate it, exactly as it could forge a
+commit author. Delegation makes a dishonest approval visible and reviewable; it does not
+make it impossible.
+
+The old `--yes` flag, which approved with no authorization trail at all, has been removed.
+Approval now has exactly two shapes: Clara at a terminal typing `approve`, or the agent
+with `--on-behalf-of-clara "<her words>"`. In a non-interactive context with neither,
+`approve.py` refuses.
+
+**What makes delegation un-forgeable** is signing with a key the agent cannot use (below).
+With signing on, an `--on-behalf-of-clara` approval still has to carry a signature that
+only Clara's key produces, so the agent can prepare the approval but cannot complete it
+without her. Note the practical cost: a signing-key passphrase prompt appears in the local
+terminal and does not forward to a phone, so un-forgeable approval means Clara is at the
+machine, not approving from Remote Control.
 
 ## Turning on signing (recommended)
 
@@ -97,12 +144,21 @@ is no sandbox here, and this document is not going to pretend otherwise.
 
 **Detectable after the fact, not prevented:**
 
-- Editing a constraint or the goal condition. The agent can do it. `validate.py` will
-  report drift the next time it runs, and `git diff` shows it. This is an alarm, not a
-  lock.
+- Editing a constraint, a non-goal, or the goal condition. The agent can do it.
+  `validate.py` will report drift the next time it runs, and `git diff` shows it. This is
+  an alarm, not a lock.
+- Adding itself as an approver or a signer. `governance/approvers.txt` and
+  `governance/allowed_signers` are in the `trust` digest, so appending an address or a key
+  moves the digest and shows as drift. Editing them is possible; doing it invisibly is not.
 - Editing the tools to disable the alarm. The tool sources are in the digest, so this
-  also shows as drift — but only to a validator that has not itself been replaced. Run
-  `git diff` against a known-good commit if you ever have real reason to suspect this.
+  also shows as drift — but only to a validator that has not itself been replaced. A
+  self-hashing checker cannot detect its own subversion. For that case, run
+  `bash tools/selfcheck.sh`, which uses git alone (no repo Python) to diff the tools and
+  governed files against the last approved commit, or run `git diff` against a known-good
+  commit yourself.
+- The authenticity of a delegated approval in attribution mode. `validate.py` flags every
+  `--on-behalf-of-clara` approval for review and records the stated authority, but cannot
+  prove the agent was actually told to run it. Signing closes this; see below.
 
 **Not enforced at all in attribution mode:**
 

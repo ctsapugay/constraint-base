@@ -48,6 +48,7 @@ from constraint_files import (  # noqa: E402
     load_constraints,
     load_goal,
     load_proposals,
+    parse_file,
     signing_configured,
     verify_signature,
 )
@@ -65,7 +66,10 @@ GOVERNED_PATHS = (
     "constraints/defaults.md",
     "constraints/project.md",
     "goals/goal-condition.md",
+    "goals/outcomes.md",
     "governance/baseline.txt",
+    "governance/approvers.txt",
+    "governance/allowed_signers",
 )
 
 # --- outcome-shape heuristics -------------------------------------------------
@@ -509,6 +513,24 @@ def check_governance(report: Report) -> None:
                     "outside the approval path.",
                 )
 
+    # 3b. Which approvals did the agent execute on Clara's stated authority?
+    #     These are sanctioned, but they are the path a rogue agent would use, so
+    #     surface every one for review rather than letting them blend in.
+    delegated = [c for c in commits if c.on_behalf is not None]
+    if delegated:
+        report.note(
+            f"{len(delegated)} approval(s) were AGENT-EXECUTED on Clara's stated "
+            "authority (not run by Clara directly). Confirm you authorized each:"
+        )
+        for c in delegated:
+            report.note(f'    {c.sha} {", ".join(c.ids)} -- authority: "{c.on_behalf}"')
+        if not signing_configured():
+            report.note(
+                "    Attribution mode: the authority text is written by the agent, so "
+                "these are an audit trail, not proof. Enable signing to make delegated "
+                "approval un-forgeable."
+            )
+
     # 4. Uncommitted changes to governed files hide from history entirely.
     code, out = git("status", "--porcelain", "--", *GOVERNED_PATHS)
     if code == 0 and out.strip():
@@ -526,6 +548,33 @@ def check_governance(report: Report) -> None:
             f"uncommitted changes to governed files ({dirty}). Commit or revert them so "
             "the history reflects the real state.",
         )
+
+
+def check_malformed_ids(report: Report) -> None:
+    """A section that looks like a constraint or criterion but has the wrong id shape.
+
+    The loaders only pick up constraint sections whose id starts with 'C-' and
+    criteria whose id starts with 'G'. A typo'd id (e.g. 'LOCAL' or '## G 1') makes
+    the section vanish from the binding set / finish line with no other symptom.
+    Flag any section that carries a tell-tale field but not a matching id.
+    """
+    for path in CONSTRAINT_FILES:
+        for s in parse_file(path):
+            if s.get("rule") and not (s.id and s.id.startswith("C-")):
+                report.warn(
+                    s.where(),
+                    f"section '{s.title}' has a 'rule:' field but its id "
+                    f"({s.id or 'none'}) is not a 'C-' constraint id. The loader will "
+                    "IGNORE it, so it would bind nothing. Give it an id like 'C-LOCAL'.",
+                )
+    for s in parse_file(GOAL_FILE):
+        if s.get("criterion") and not (s.id and s.id.upper().startswith("G")):
+            report.warn(
+                s.where(),
+                f"section '{s.title}' has a 'criterion:' field but its id "
+                f"({s.id or 'none'}) is not a 'G' criterion id. The loader will IGNORE "
+                "it, so it would not count toward the finish line. Give it an id like 'G2'.",
+            )
 
 
 def check_placeholders(report: Report) -> None:
@@ -553,6 +602,7 @@ def main(argv: list[str]) -> int:
     check_goal(report)
     check_proposals(report, approved)
     check_governance(report)
+    check_malformed_ids(report)
     check_placeholders(report)
 
     if report.errors:

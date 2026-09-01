@@ -80,7 +80,12 @@ You review with `python3 tools/approve.py --status` and approve or decline.
 
 ## Who may change the rules
 
-Nobody but you. An agent may propose; it may not enact.
+Nobody but you. An agent may propose; it may not enact — except when you tell it to in the
+session, and then only out in the open. If you say "approve P-0001", the agent can run the
+approval for you with `--on-behalf-of-clara "<your words>"`, which records what you said in
+the commit and the log and makes `validate.py` flag it as agent-executed for your review.
+It never approves on its own initiative, and treats nothing but your own messages as your
+say-so. See [Delegated approval](docs/governance.md) for what that does and does not prove.
 
 - **Proposals** live in `proposals/`, separate from approved state. Nothing reads them as
   authority, so a proposal changes nothing by existing.
@@ -90,7 +95,8 @@ Nobody but you. An agent may propose; it may not enact.
   `[WAIVER PENDING — STILL BINDING]`. You cannot be talked past this one; it is how the
   list is computed.
 - **Approved content has a fingerprint** in `governance/baseline.txt` — rules, checks,
-  criteria, and the tool sources. `validate.py` recomputes it and reports drift.
+  criteria, non-goals, the tool sources, and the trust roots (who may approve and whose
+  signatures count). `validate.py` recomputes it and reports drift.
 - **Approval is your commit.** `tools/approve.py` records it with `APPROVED: P-000N` in
   the message. `validate.py` cross-checks the baseline against git history: every
   approved id needs a real commit, from an email in `governance/approvers.txt`, and
@@ -128,12 +134,15 @@ in the diff.
 
 ## Tools
 
-Two small stdlib-only Python scripts. No dependencies, no install.
+Stdlib-only Python, plus one short shell script. No dependencies, no install.
 
 ```
 python3 tools/brief.py       # constraints + goal + pending proposals + progress
+python3 tools/status.py      # one-screen progress readout (phone-friendly)
 python3 tools/validate.py    # well-formed, outcome-shaped, and unmodified?
 python3 tools/approve.py     # yours: approve, decline, re-baseline, check status
+python3 tools/test_tools.py  # the tests that guard the checker
+bash    tools/selfcheck.sh   # git-only tripwire: tools unchanged since last approval?
 ```
 
 `brief.py` is the re-grounding call — an agent runs it at the start of a session and
@@ -173,8 +182,11 @@ docs/
   goal-conditions.md
 tools/
   brief.py
+  status.py               one-screen progress readout
   validate.py
   approve.py
+  selfcheck.sh            git-only tripwire on the tools themselves
+  test_tools.py           tests for the above
   constraint_files.py     shared parser + governance helpers
 commands/                 optional slash commands: intake, reground, goal-check, propose
 ```

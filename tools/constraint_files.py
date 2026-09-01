@@ -43,9 +43,19 @@ APPROVERS_FILE = GOVERNANCE_DIR / "approvers.txt"
 ALLOWED_SIGNERS_FILE = GOVERNANCE_DIR / "allowed_signers"
 
 # Tool sources are governed too: a validator the agent can quietly edit is not a check.
-GOVERNED_TOOLS = ("constraint_files.py", "validate.py", "approve.py", "brief.py")
+# status.py reports progress Clara reads remotely, so faking it would misrepresent
+# "done" -- it is governed alongside the enforcement tools.
+GOVERNED_TOOLS = (
+    "constraint_files.py",
+    "validate.py",
+    "approve.py",
+    "brief.py",
+    "status.py",
+)
 
 APPROVAL_TOKEN_RE = re.compile(r"\bAPPROVED:\s*([Pp]-\d{3,5}(?:\s*,\s*[Pp]-\d{3,5})*|BASELINE)\b")
+# Marks an approval the agent executed on Clara's explicitly stated authority.
+ON_BEHALF_RE = re.compile(r'ON-BEHALF-OF-CLARA:\s*"?(?P<text>[^"\n]*)"?')
 
 # "## C-LOCAL — Development stays local"  /  "## G1 - Something"
 HEADING_RE = re.compile(r"^##\s+(?P<rest>.+?)\s*$")
@@ -269,7 +279,7 @@ def load_baseline() -> Baseline:
             baseline.updated = value
         elif key == "approved":
             baseline.approved.append(value.upper())
-        elif key in ("constraints", "goal", "tools"):
+        elif key in ("constraints", "goal", "tools", "trust"):
             baseline.digests[key] = value
     return baseline
 
@@ -332,6 +342,10 @@ def canonical_goal() -> str:
             )
         )
     lines.append(_norm(section_text(GOAL_FILE, "out of scope")))
+    # Non-goals are the scope guard -- they stop an agent expanding the project on
+    # its own initiative -- so they are governed too, even though they live in
+    # outcomes.md rather than goal-condition.md.
+    lines.append(_norm(section_text(OUTCOMES_FILE, "non-goals")))
     return "\n".join(lines)
 
 
@@ -344,6 +358,31 @@ def canonical_tools() -> str:
     return "\n".join(parts)
 
 
+def canonical_trust() -> str:
+    """The root-of-trust files: who may approve, and whose signatures verify.
+
+    These files decide whether an approval counts at all, so they are governed
+    like everything else. If they were not, an agent could append its own address
+    to approvers.txt (attribution mode) or its own key to allowed_signers (signed
+    mode) and then approve as itself, with nothing showing as drift. Governing
+    them turns that into a visible finding: adding an approver or a signer moves
+    this digest, which validate.py reports.
+
+    Comments and blank lines are ignored so reformatting the files is not drift;
+    a change to who is trusted is.
+    """
+    parts = []
+    for path in (APPROVERS_FILE, ALLOWED_SIGNERS_FILE):
+        content = path.read_text(encoding="utf-8") if path.exists() else ""
+        meaningful = "\n".join(
+            _norm(line)
+            for line in content.splitlines()
+            if line.strip() and not line.strip().startswith("#")
+        )
+        parts.append(f"### {path.name}\n{meaningful}")
+    return "\n".join(parts)
+
+
 def digest(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
@@ -353,6 +392,7 @@ def current_digests() -> dict[str, str]:
         "constraints": digest(canonical_constraints()),
         "goal": digest(canonical_goal()),
         "tools": digest(canonical_tools()),
+        "trust": digest(canonical_trust()),
     }
 
 
@@ -430,6 +470,7 @@ class ApprovalCommit:
     signature: str  # git's %G? code: G good, U good/untrusted, B bad, N none, E error
     subject: str
     ids: list[str]
+    on_behalf: str | None = None  # set when the agent approved on Clara's stated authority
 
     @property
     def signed_ok(self) -> bool:
@@ -461,6 +502,8 @@ def approval_commits() -> list[ApprovalCommit]:
         for match in APPROVAL_TOKEN_RE.finditer(f"{subject}\n{body}"):
             ids.extend(part.strip().upper() for part in match.group(1).split(","))
         if ids:
+            on_behalf_match = ON_BEHALF_RE.search(body)
+            on_behalf = on_behalf_match.group("text").strip() if on_behalf_match else None
             commits.append(
                 ApprovalCommit(
                     sha=sha[:12],
@@ -468,6 +511,7 @@ def approval_commits() -> list[ApprovalCommit]:
                     signature=sig or "N",
                     subject=subject,
                     ids=ids,
+                    on_behalf=on_behalf,
                 )
             )
     return commits

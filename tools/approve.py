@@ -11,6 +11,20 @@ does is make approval a deliberate, recorded, committed act, so that an approval
 was not hers is visible in git history afterwards rather than invisible. If you want
 approval that an agent cannot fabricate, turn on commit signing; see docs/governance.md.
 
+Delegated approval. Clara can let the agent run an approval in her stead, but only when
+she has said so explicitly in the session. The agent passes what she said:
+
+    python3 tools/approve.py P-0001 --on-behalf-of-clara "yes, approve P-0001"
+
+That records her words in the commit body (ON-BEHALF-OF-CLARA: ...) and appends an entry
+to progress/log.md, and validate.py flags every such approval as agent-executed so she
+can review them. In attribution mode this is an honest audit trail, not proof: the agent
+writes the quote, so a determined agent could fabricate it -- what it prevents is a
+*quiet* self-approval, which is the failure mode governance exists to catch. For approval
+the agent genuinely cannot fabricate, turn on signing with a key it cannot use (see
+docs/governance.md); then --on-behalf-of-clara still needs a signature only Clara's key
+produces.
+
 Standard library only.
 """
 
@@ -26,6 +40,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from constraint_files import (  # noqa: E402
     BASELINE_FILE,
     GOVERNANCE_DIR,
+    LOG_FILE,
     PROPOSALS_DIR,
     current_digests,
     drift,
@@ -45,12 +60,20 @@ def _fail(msg: str) -> int:
     return 1
 
 
-def _confirm(prompt: str, assume_yes: bool) -> bool:
-    if assume_yes:
-        print(f"{prompt} -- assumed yes (--yes)")
+def _confirm(prompt: str, on_behalf: str | None) -> bool:
+    if on_behalf is not None:
+        print(prompt)
+        print("  Delegated approval, executed by the agent on Clara's stated authority:")
+        print(f'    "{on_behalf}"')
+        print("  Recorded in the commit and in progress/log.md, and flagged by")
+        print("  validate.py as agent-executed. This is NOT Clara running it herself.")
         return True
     if not sys.stdin.isatty():
-        print(f"{prompt}\n  x Refusing: no terminal. Run this yourself, or pass --yes.")
+        print(
+            f"{prompt}\n  x Refusing: no terminal, and no delegated authority given.\n"
+            '    Run this yourself at a terminal, or pass'
+            ' --on-behalf-of-clara "<what Clara said>".'
+        )
         return False
     try:
         answer = input(f"{prompt} Type 'approve' to continue: ").strip().lower()
@@ -58,6 +81,22 @@ def _confirm(prompt: str, assume_yes: bool) -> bool:
         print()
         return False
     return answer == "approve"
+
+
+def _append_log(first_line: str, on_behalf: str) -> None:
+    """Record a delegated approval in progress/log.md so it is never silent."""
+    entry = (
+        f"\n## {TODAY} — Delegated approval (agent-executed)\n\n"
+        f"- {first_line}\n"
+        f'- Clara\'s stated authority, verbatim: "{on_behalf}"\n'
+        "- Attribution mode makes this an audit record, not proof the authority was "
+        "real. Enable signing (docs/governance.md) for approval the agent cannot forge.\n"
+    )
+    try:
+        with LOG_FILE.open("a", encoding="utf-8") as fh:
+            fh.write(entry)
+    except OSError as exc:
+        print(f"  ! Could not append to progress/log.md: {exc}")
 
 
 def _write_baseline(approved: list[str]) -> None:
@@ -71,6 +110,7 @@ def _write_baseline(approved: list[str]) -> None:
         f"constraints {digests['constraints']}",
         f"goal {digests['goal']}",
         f"tools {digests['tools']}",
+        f"trust {digests['trust']}",
     ]
     lines += [f"approved {pid}" for pid in approved]
     BASELINE_FILE.write_text("\n".join(lines) + "\n", encoding="utf-8")
@@ -97,12 +137,18 @@ def _stamp_proposal(section, new_status: str) -> None:
     path.write_text(text, encoding="utf-8")
 
 
-def _commit(message: str, assume_yes: bool) -> int:
+def _commit(message: str, on_behalf: str | None) -> int:
+    first_line = message.splitlines()[0]
+    paths = ["constraints", "goals", "governance", "proposals"]
+    if on_behalf is not None:
+        message = message + f'\n\nON-BEHALF-OF-CLARA: "{on_behalf}"'
+        _append_log(first_line, on_behalf)
+        paths.append("progress")  # so the audit entry rides along in the same commit
+
     if not in_git_repo():
         print("  ! Not a git repository. Baseline written, but not committed.")
         print("    Governance leans on git history; commit this yourself.")
         return 0
-    paths = ["constraints", "goals", "governance", "proposals"]
     code, out = git("add", *paths)
     if code != 0:
         return _fail(f"git add failed: {out}")
@@ -112,7 +158,9 @@ def _commit(message: str, assume_yes: bool) -> int:
     code, out = git(*args)
     if code != 0:
         return _fail(f"git commit failed: {out}")
-    print(f"  Committed: {message.splitlines()[0]}")
+    print(f"  Committed: {first_line}")
+    if on_behalf is not None:
+        print("  Recorded as agent-executed on Clara's stated authority.")
     if signing_configured():
         print("  Signed. validate.py will verify it against governance/allowed_signers.")
     else:
@@ -155,7 +203,7 @@ def cmd_status() -> int:
     return 0
 
 
-def cmd_baseline(assume_yes: bool) -> int:
+def cmd_baseline(on_behalf: str | None) -> int:
     status, _criteria, _statement = load_goal()
     state = (status.get("state").lower() if status else "")
     if state != "approved":
@@ -171,7 +219,7 @@ def cmd_baseline(assume_yes: bool) -> int:
     print("  constraints/defaults.md, constraints/project.md, goals/goal-condition.md")
     print("  and the tool sources, as the approved baseline.")
     print("\nReview 'git diff' and read the constraints before you do this.")
-    if not _confirm("\nRecord this as approved?", assume_yes):
+    if not _confirm("\nRecord this as approved?", on_behalf):
         return _fail("Cancelled. Nothing written.")
 
     _write_baseline(load_baseline().approved)
@@ -180,11 +228,11 @@ def cmd_baseline(assume_yes: bool) -> int:
         "APPROVED: BASELINE\n\n"
         "Engage governance. Standing constraints and the goal condition are now "
         "changeable only through an approved proposal.",
-        assume_yes,
+        on_behalf,
     )
 
 
-def cmd_approve(ids: list[str], assume_yes: bool) -> int:
+def cmd_approve(ids: list[str], on_behalf: str | None) -> int:
     baseline = load_baseline()
     if not baseline.exists:
         return _fail(
@@ -229,7 +277,7 @@ def cmd_approve(ids: list[str], assume_yes: bool) -> int:
         print("Note: governed content is unchanged from the last baseline. If this")
         print("proposal was meant to change a constraint, the edit has not been made yet.")
 
-    if not _confirm(f"\nApprove {', '.join(wanted)} and re-record the baseline?", assume_yes):
+    if not _confirm(f"\nApprove {', '.join(wanted)} and re-record the baseline?", on_behalf):
         return _fail("Cancelled. Nothing written.")
 
     for pid in wanted:
@@ -239,11 +287,11 @@ def cmd_approve(ids: list[str], assume_yes: bool) -> int:
     return _commit(
         f"APPROVED: {', '.join(wanted)}\n\n"
         + "\n".join(f"{pid}: {proposals[pid].title}" for pid in wanted),
-        assume_yes,
+        on_behalf,
     )
 
 
-def cmd_decline(ids: list[str], assume_yes: bool) -> int:
+def cmd_decline(ids: list[str], on_behalf: str | None) -> int:
     proposals = {p.id.upper(): p for p in load_proposals() if p.id}
     wanted = [i.upper() for i in ids]
     missing = [i for i in wanted if i not in proposals]
@@ -252,29 +300,42 @@ def cmd_decline(ids: list[str], assume_yes: bool) -> int:
     for pid in wanted:
         _stamp_proposal(proposals[pid], "declined")
         print(f"  Declined {pid}: {proposals[pid].title}")
-    return _commit(f"Decline proposal(s): {', '.join(wanted)}", assume_yes)
+    # Declining loosens nothing, so it carries no ON-BEHALF marker or log entry.
+    return _commit(f"Decline proposal(s): {', '.join(wanted)}", None)
 
 
 def main(argv: list[str]) -> int:
-    assume_yes = "--yes" in argv
-    args = [a for a in argv if a != "--yes"]
+    on_behalf: str | None = None
+    if "--on-behalf-of-clara" in argv:
+        i = argv.index("--on-behalf-of-clara")
+        if i + 1 >= len(argv) or argv[i + 1].startswith("--"):
+            return _fail(
+                'The --on-behalf-of-clara flag needs the authorization text, e.g.\n'
+                '    python3 tools/approve.py P-0001 --on-behalf-of-clara "yes, approve P-0001"'
+            )
+        on_behalf = argv[i + 1].strip()
+        if not on_behalf:
+            return _fail("--on-behalf-of-clara was given empty authorization text.")
+        argv = argv[:i] + argv[i + 2 :]
+
+    args = argv
 
     if not args or "--status" in args:
         return cmd_status()
     if "--baseline" in args:
-        return cmd_baseline(assume_yes)
+        return cmd_baseline(on_behalf)
     if "--decline" in args:
         ids = [a for a in args if a != "--decline"]
         if not ids:
             return _fail("Which proposal? e.g. --decline P-0001")
-        return cmd_decline(ids, assume_yes)
+        return cmd_decline(ids, on_behalf)
 
     ids = [a for a in args if not a.startswith("--")]
     if not ids:
         return _fail("Nothing to do. Try --status.")
     if not PROPOSALS_DIR.exists():
         return _fail("No proposals/ directory.")
-    return cmd_approve(ids, assume_yes)
+    return cmd_approve(ids, on_behalf)
 
 
 if __name__ == "__main__":
