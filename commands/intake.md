@@ -17,8 +17,9 @@ intake process exactly. Key points, so you do not have to re-derive them:
   encourage waiving.
 - Draft nothing to disk until she has agreed to the substance.
 
-Then write `goals/outcomes.md`, `constraints/project.md`, and `goals/goal-condition.md`,
-read `docs/goal-conditions.md`, and present the goal condition for her approval or edit.
+Then write `goals/outcomes.md`, `constraints/project.md`, `goals/goal-condition.md`, and
+the criteria in `goals/criteria.md`; read `docs/goal-conditions.md`, and present the goal
+condition and its criteria for her approval or edit.
 
 Finish by running `python3 tools/validate.py`, fixing what it reports, and appending an
 entry to `progress/log.md`.

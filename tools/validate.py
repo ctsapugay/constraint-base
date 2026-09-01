@@ -34,6 +34,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from constraint_files import (  # noqa: E402
     CHECKS_FILE,
     CONSTRAINT_FILES,
+    CRITERIA_FILE,
     GOAL_FILE,
     OUTCOMES_FILE,
     ROOT,
@@ -70,6 +71,7 @@ GOVERNED_PATHS = (
     "constraints/defaults.md",
     "constraints/project.md",
     "goals/goal-condition.md",
+    "goals/criteria.md",
     "goals/outcomes.md",
     "checks/registry.md",
     "governance/baseline.txt",
@@ -302,7 +304,10 @@ def check_goal(report: Report) -> None:
         report.note("Goal condition has no statement yet.")
 
     if not criteria:
-        report.error(GOAL_FILE.name, "no criteria (expected sections like '## G1 — ...')")
+        report.error(
+            CRITERIA_FILE.name,
+            "no criteria found (expected sections like '## G1 — ...' in goals/criteria.md)",
+        )
 
     seen: dict[str, str] = {}
     for g in criteria:
@@ -574,7 +579,7 @@ def check_malformed_ids(report: Report) -> None:
                     f"({s.id or 'none'}) is not a 'C-' constraint id. The loader will "
                     "IGNORE it, so it would bind nothing. Give it an id like 'C-LOCAL'.",
                 )
-    for s in parse_file(GOAL_FILE):
+    for s in parse_file(CRITERIA_FILE):
         if s.get("criterion") and not (s.id and s.id.upper().startswith("G")):
             report.warn(
                 s.where(),
@@ -683,7 +688,7 @@ def report_completion(report: Report) -> None:
 
 def check_placeholders(report: Report) -> None:
     remaining = []
-    for path in (ROOT / "constraints" / "project.md", OUTCOMES_FILE, GOAL_FILE):
+    for path in (ROOT / "constraints" / "project.md", OUTCOMES_FILE, GOAL_FILE, CRITERIA_FILE):
         hits = has_placeholders(path)
         if hits:
             remaining.append((path, hits))

@@ -26,25 +26,29 @@ always possible, it is a direction, not a finish line.
 **Silent on how.** It says what is true at the end, never what happens in between. Same
 rules as `docs/outcome-vs-implementation.md`.
 
-## Criteria vs. checks
+## Three files, one finish line
 
-Two layers, deliberately separate:
+The goal condition itself is short and stable, and it does **not** contain the criteria or
+the checks — it points to them. The finish line is three files together:
 
-- **Criteria** live here, in the goal condition. They are the few, human-meaningful
-  statements of what "done" means — aim for three to seven. Each has a prose `check:`
-  describing how you'd confirm it. A criterion's `state:` is a claim, recorded once when
-  it was first confirmed.
-- **Checks** live in `checks/registry.md`, outside the goal condition, and there can be
-  many. Each is an executable command that `tools/verify.py` runs; it passes or fails on
-  the project's real behaviour, every time. A complex project might have dozens — keeping
-  them out of the finish line is what stops the finish line becoming a task list.
+- **`goals/goal-condition.md`** — a plain overview of the project, plus the *completion
+  contract*: a standing "what completion requires" section that defines done **by
+  reference** — every criterion met, the check suite green, every constraint upheld — and
+  cites the constraint system so the work can't be judged against a softened bar. It does
+  not list criteria or checks, because those grow long.
+- **`goals/criteria.md`** — the measurable criteria: the few, human-meaningful statements
+  of what done means (aim for three to seven), each with a prose `check:` and a `state:`.
+  A criterion's `state:` is a claim, recorded once when it was first confirmed.
+- **`checks/registry.md`** — the executable checks `tools/verify.py` runs, which pass or
+  fail on real behaviour every time. There can be dozens; keeping them out of the goal
+  condition is what stops the finish line becoming a task list.
 
-The link between them is the **completion gate**, a standing clause every goal condition
-carries: the task is done only when every criterion is met *and* `verify.py` is green —
-every check passing, or waived with Clara's countersignature. The criteria say what done
-means; the checks prove it still holds at the end, not just when a box was first ticked.
-A regression that breaks a passing check turns the suite red and re-opens the finish line.
-Don't enumerate individual checks here; register them, and let the gate require the suite.
+The completion contract binds them: done only when every criterion is met *and* `verify.py`
+is green (each check passing or waived with Clara's countersignature) *and* the constraints
+held. The criteria say what done means; the checks prove it still holds at the end, not
+just when a box was first ticked — a regression that breaks a passing check turns the suite
+red and re-opens the finish line. Don't enumerate criteria or checks in the goal condition;
+put them in their files and let the contract require them.
 
 ## Aspirational vs. checkable
 

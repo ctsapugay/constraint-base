@@ -525,8 +525,29 @@ def _verify_html(s: dict) -> str:
             f'<p class="subtle">{total} checks in the registry, not the finish line · {ran}</p>')
 
 
-def render_html(s: dict) -> str:
-    """Self-contained dashboard body. Publish as an Artifact; no server needed."""
+FONTS = (
+    "https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600"
+    "&family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Serif:ital@0;1&display=swap"
+)
+
+
+def page_head() -> str:
+    """The <title>/<link>/<style> block — the styles the body needs, loaded once."""
+    return (
+        "<title>Constraint Board</title>\n"
+        '<link rel="preconnect" href="https://fonts.googleapis.com">\n'
+        '<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>\n'
+        f'<link rel="stylesheet" href="{FONTS}">\n'
+        f"<style>{_STYLE}</style>"
+    )
+
+
+def render_body(s: dict) -> str:
+    """The <main> dashboard markup only (no <title>/<style>).
+
+    Kept separate so a live server (tools/board_server.py) can poll and swap just this
+    fragment without re-loading the fonts and stylesheet each time.
+    """
     if s["criteria_total"]:
         title_line = f'{s["criteria_met"]} of {s["criteria_total"]} criteria proven'
         sub = "Each is a checkable fact with the evidence beside it."
@@ -538,12 +559,7 @@ def render_html(s: dict) -> str:
         f'&ldquo;{_esc(s["last_log_title"])}&rdquo;</span>'
         if s["log_entries"] else "no progress logged yet"
     )
-    return f"""<title>Constraint Board</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Serif:ital@0;1&display=swap">
-<style>{_STYLE}</style>
-<main class="board">
+    return f"""<main class="board">
   <header class="head">
     {_ring_svg(s["percent"])}
     <div class="head__main">
@@ -582,6 +598,11 @@ def render_html(s: dict) -> str:
     Progress is by criteria count — each binary and equally weighted, not a measure of effort.
   </footer>
 </main>"""
+
+
+def render_html(s: dict) -> str:
+    """Self-contained dashboard page (head + body). Publish as an Artifact; no server."""
+    return page_head() + "\n" + render_body(s)
 
 
 def main(argv: list[str]) -> int:

@@ -34,6 +34,7 @@ CONSTRAINT_FILES = [
     ROOT / "constraints" / "project.md",
 ]
 GOAL_FILE = ROOT / "goals" / "goal-condition.md"
+CRITERIA_FILE = ROOT / "goals" / "criteria.md"
 OUTCOMES_FILE = ROOT / "goals" / "outcomes.md"
 LOG_FILE = ROOT / "progress" / "log.md"
 CHECKS_FILE = ROOT / "checks" / "registry.md"
@@ -55,6 +56,7 @@ GOVERNED_TOOLS = (
     "brief.py",
     "status.py",
     "verify.py",
+    "board_server.py",
 )
 
 APPROVAL_TOKEN_RE = re.compile(r"\bAPPROVED:\s*([Pp]-\d{3,5}(?:\s*,\s*[Pp]-\d{3,5})*|BASELINE)\b")
@@ -180,14 +182,22 @@ def load_constraints() -> list[Section]:
     return out
 
 
+def load_criteria() -> list[Section]:
+    """The measurable criteria (goals/criteria.md). Missing file -> empty.
+
+    Criteria live here, not in goal-condition.md, so the goal condition can stay a short
+    stable contract that points to this list rather than repeating it -- the list grows.
+    """
+    return [s for s in parse_file(CRITERIA_FILE) if s.id and s.id.upper().startswith("G")]
+
+
 def load_goal() -> tuple[Section | None, list[Section], str]:
-    """Return (status section, criteria, statement text)."""
+    """Return (status section from goal-condition.md, criteria from criteria.md, statement)."""
     sections = parse_file(GOAL_FILE)
     status = next(
         (s for s in sections if s.id is None and s.title.lower() == "status"), None
     )
-    criteria = [s for s in sections if s.id and s.id.upper().startswith("G")]
-    return status, criteria, section_text(GOAL_FILE, "statement")
+    return status, load_criteria(), section_text(GOAL_FILE, "statement")
 
 
 def load_checks() -> list[Section]:
@@ -363,9 +373,9 @@ def canonical_goal() -> str:
             )
         )
     lines.append(_norm(section_text(GOAL_FILE, "out of scope")))
-    # The completion gate is part of the finish line: it says the task is not done
-    # until the whole check suite is green or waived. Governed so it can't be softened.
-    lines.append(_norm(section_text(GOAL_FILE, "completion gate")))
+    # The completion contract is part of the finish line: it defines "done" by reference
+    # to the criteria, the checks, and the constraints. Governed so it can't be softened.
+    lines.append(_norm(section_text(GOAL_FILE, "what completion requires")))
     # Non-goals are the scope guard -- they stop an agent expanding the project on
     # its own initiative -- so they are governed too, even though they live in
     # outcomes.md rather than goal-condition.md.

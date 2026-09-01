@@ -1,7 +1,9 @@
 # Intake
 
 Intake is a conversation, not a form. The agent runs it with Clara, and its output is
-written into `constraints/project.md`, `goals/outcomes.md`, and `goals/goal-condition.md`.
+written into `constraints/project.md`, `goals/outcomes.md`, `goals/goal-condition.md`, and
+`goals/criteria.md`. (Executable checks in `checks/registry.md` are usually added during
+goal mode as behaviours become true, not at intake.)
 
 The point is to end with a finish line Clara agrees with and an agent that knows the
 boundaries. It should take ten to twenty minutes, not an hour.
@@ -59,14 +61,18 @@ agent will work under, and check she is fine with it.
 Distil the outcomes into a goal condition and present it for approval or edit. This is
 the part that matters most — read `docs/goal-conditions.md` before drafting.
 
-Present it as: the one-paragraph statement, then the criteria with their checks, then
-"anything missing, anything you would cut?" Expect to revise it once or twice.
+Present it as: the one-paragraph statement (which goes in `goals/goal-condition.md`), then
+the criteria with their checks (which go in `goals/criteria.md`), then "anything missing,
+anything you would cut?" Expect to revise it once or twice. The goal condition itself only
+carries the statement and the standing completion contract; the criteria list lives beside
+it in `goals/criteria.md`.
 
 When she approves, set `state: approved` in `goals/goal-condition.md` and record the date.
 
 ## Finish
 
-1. Write the three files.
+1. Write the files: `constraints/project.md`, `goals/outcomes.md`,
+   `goals/goal-condition.md`, and `goals/criteria.md`.
 2. Run `python3 tools/validate.py`. Fix anything it reports. If it warns about a line
    that is genuinely fine, leave it and say why in the log — do not edit the validator to
    silence it.

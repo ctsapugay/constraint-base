@@ -109,6 +109,22 @@ class ShapeHeuristicTests(unittest.TestCase):
         self.assertEqual(vd.shape_warnings(clean, has_why=False), [])
 
 
+class DashboardTests(unittest.TestCase):
+    def test_body_and_head_split(self):
+        import status
+        s = status.collect()
+        self.assertIn("<style>", status.page_head())
+        body = status.render_body(s)
+        self.assertTrue(body.strip().startswith("<main"))
+        self.assertNotIn("<style>", body)  # styles belong to the head, not the fragment
+
+    def test_full_page_has_root_and_poll(self):
+        import board_server
+        page = board_server.full_page()
+        self.assertIn('id="root"', page)
+        self.assertIn("/fragment", page)  # the polling endpoint the browser hits
+
+
 class DigestAndRegexTests(unittest.TestCase):
     def test_digest_is_deterministic(self):
         self.assertEqual(cf.digest("abc"), cf.digest("abc"))
@@ -160,17 +176,24 @@ GOAL = """\
 
 The tool prints the current date when run.
 
-## Criteria
+## What completion requires
 
-## G1 — Prints a date
-- **criterion:** Running the tool prints today's date in ISO form.
-- **check:** Run the tool and confirm the printed date matches `date +%F`.
-- **state:** unmet
-- **evidence:**
+Complete only when every criterion in goals/criteria.md is met, tools/verify.py is green,
+and every constraint in constraints/ held throughout.
 
 ## Out of scope for "done"
 
 - Time zones other than local.
+"""
+
+CRITERIA_MD = """\
+# Criteria
+
+## G1 — Prints a date
+- **criterion:** Running the tool prints today's date in ISO form.
+- **check:** Run the tool and confirm the printed date matches the system date exactly.
+- **state:** unmet
+- **evidence:**
 """
 
 OUTCOMES = """\
@@ -227,6 +250,7 @@ class IntegrationTests(unittest.TestCase):
         self._write("constraints/defaults.md", DEFAULTS)
         self._write("constraints/project.md", PROJECT)
         self._write("goals/goal-condition.md", GOAL)
+        self._write("goals/criteria.md", CRITERIA_MD)
         self._write("goals/outcomes.md", OUTCOMES)
         self._write("checks/registry.md", CHECKS)
         self._write(".gitignore", GITIGNORE)
@@ -235,7 +259,7 @@ class IntegrationTests(unittest.TestCase):
         (self.dir / "proposals").mkdir(parents=True, exist_ok=True)
         (self.dir / "tools").mkdir(parents=True, exist_ok=True)
         for name in ("constraint_files.py", "validate.py", "approve.py", "brief.py",
-                     "status.py", "verify.py"):
+                     "status.py", "verify.py", "board_server.py"):
             shutil.copy(TOOLS_DIR / name, self.dir / "tools" / name)
         self._git("init", "-q")
         self._git("config", "user.email", "test@example.com")
@@ -396,11 +420,12 @@ class IntegrationTests(unittest.TestCase):
     def test_completion_gate_blocks_met_goal(self):
         # Goal claimed met and its one criterion has evidence, but the checks were
         # never run -> the completion gate errors.
-        met_goal = GOAL.replace(
+        self._write("goals/goal-condition.md", GOAL.replace("- **state:** approved",
+                                                             "- **state:** met"))
+        self._write("goals/criteria.md", CRITERIA_MD.replace(
             "- **state:** unmet\n- **evidence:**",
             "- **state:** met\n- **evidence:** 2020-01-02 ran it, ok",
-        ).replace("- **state:** approved", "- **state:** met")
-        self._write("goals/goal-condition.md", met_goal)
+        ))
         r = self._run("validate.py")
         self.assertEqual(r.returncode, 1)
         self.assertIn("completion gate is not satisfied", r.stdout)
