@@ -166,9 +166,11 @@ repeating itself, or losing the thread, refresh the checkpoint and recommend a f
 session: a new one can resume from the repo alone (C-RESUMABLE), and the checkpoint is what
 makes that cheap.
 
-**Priming prompt — boot a cold session.** `progress/priming-prompt.md` is a paste-in block
-that points a brand-new session at `CLAUDE.md`, `brief.py`, the checkpoint, the blockers,
-and the log, plus a line on what the project is. Keep it current and carry it forward.
+**Priming prompts — boot a cold session.** `progress/priming-prompt.md` holds two paste-in
+templates — one for a worker, one for an observer — that point a brand-new session at
+`CLAUDE.md`, the right tools, and the current state. They ship generic; fill them in once
+intake is done (the `Project:` line and any project-specific pointers), keep them current,
+and carry them to each new session.
 
 `python3 tools/brief.py` prints the checkpoint and open blockers in a WORKING STATE section
 on every re-grounding call, so the current state and what is stuck are in front of you each
@@ -188,7 +190,7 @@ time you check in.
 | `progress/log.md` | Append-only session record so a fresh session can resume. |
 | `progress/checkpoint.md` | Short current-state card, overwritten in place — "where am I now". Not governed. |
 | `progress/blockers.md` | Open blockers ledger (`## B1 —`). What's stuck, so a run moves fronts, not stalls. |
-| `progress/priming-prompt.md` | Paste-in block that boots a cold session. Editable; carried forward. |
+| `progress/priming-prompt.md` | Paste-in templates that boot a cold worker or observer. Fill in after intake. |
 | `proposals/` | Your requests to change a rule. Inert until Clara approves. |
 | `governance/baseline.txt` | What Clara approved, as a digest. Written only by `approve.py`. |
 | `docs/outcome-vs-implementation.md` | How to tell an outcome from a smuggled implementation detail. |
@@ -260,7 +262,9 @@ The observer has two windows into the worker, and should use both. If you are th
   thing this split is meant to avoid.
 - **You are read-only over the constraint system.** Report what you see; do not edit
   `constraints/`, `goals/`, `progress/log.md`, or run `approve.py`. Those belong to the
-  worker's turn and to Clara. Answer her questions and check in when she prompts.
+  worker's turn and to Clara. Answer her questions and check in when she prompts. The
+  observer template in `progress/priming-prompt.md` boots a cold observer session with
+  exactly this posture.
 - **Same directory, not a worktree.** The observer must share the worker's working
   directory so it sees live progress; a separate git worktree would show a stale copy.
 - **Don't run the worker's checks as if they were yours.** Reading a criterion's `check:`

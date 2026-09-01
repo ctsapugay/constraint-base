@@ -78,11 +78,14 @@ When she approves, set `state: approved` in `goals/goal-condition.md` and record
    silence it.
 3. Append an entry to `progress/log.md` recording that intake happened, what was agreed,
    and any assumptions.
-4. Ask her to run `python3 tools/approve.py --baseline`. This is the handover: it records
+4. Fill in the priming-prompt templates in `progress/priming-prompt.md` — replace the
+   `Project:` line in both the worker and observer blocks with a true one-liner, so a cold
+   session boots straight into this project. They shipped generic; make them real.
+5. Ask her to run `python3 tools/approve.py --baseline`. This is the handover: it records
    what she approved and takes the constraints and the finish line out of your hands. Say
    so plainly rather than presenting it as a formality — from that point you propose
    changes, you do not make them.
-5. Tell her she can still edit anything by hand whenever she likes; she just re-records
+6. Tell her she can still edit anything by hand whenever she likes; she just re-records
    with `approve.py` afterwards so the baseline matches.
 
 ## What good output looks like

@@ -183,7 +183,7 @@ progress/
   log.md                  append-only session record
   checkpoint.md           short current-state card, overwritten in place (not governed)
   blockers.md             open blockers ledger — what's stuck (not governed)
-  priming-prompt.md       paste-in block to boot a cold session (editable)
+  priming-prompt.md       paste-in worker + observer templates to boot a cold session
 proposals/
   TEMPLATE.md             how to ask for a rule to change
 governance/
