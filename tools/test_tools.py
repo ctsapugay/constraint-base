@@ -417,6 +417,47 @@ class IntegrationTests(unittest.TestCase):
         r3 = self._run("validate.py")
         self.assertNotIn("not countersigned", r3.stdout)
 
+    def test_signed_approval_verifies(self):
+        # Signing mode: a signed approval must validate, not be flagged unsigned.
+        # Guards the %G? / allowed-signers wiring in approval_commits.
+        keydir = Path(tempfile.mkdtemp(prefix="cbase-key-"))
+        self.addCleanup(shutil.rmtree, keydir, ignore_errors=True)
+        key = keydir / "id"  # kept OUTSIDE the repo so the private key isn't committed
+        kg = subprocess.run(
+            ["ssh-keygen", "-t", "ed25519", "-N", "", "-f", str(key), "-q", "-C", "test"],
+            capture_output=True, text=True,
+        )
+        if kg.returncode != 0:
+            self.skipTest("ssh-keygen unavailable")
+        pub = (keydir / "id.pub").read_text().strip()
+        self._write("governance/allowed_signers", f"test@example.com {pub}\n")
+        self._git("config", "gpg.format", "ssh")
+        self._git("config", "user.signingkey", str(keydir / "id.pub"))
+        self._git("config", "gpg.ssh.allowedSignersFile",
+                  str(self.dir / "governance/allowed_signers"))
+        self._git("add", "-A")
+        self._git("commit", "-q", "-m", "enable signing")
+
+        self.assertEqual(
+            self._run("approve.py", "--baseline", "--on-behalf-of-clara", "ok").returncode, 0)
+        self._write("proposals/P-0001-x.md", textwrap.dedent("""\
+            ## P-0001 — test waiver
+            - **status:** proposed
+            - **kind:** waiver
+            - **targets:** C-EVIDENCE
+            - **because:** A long enough explanation so approve.py accepts it in this test.
+            - **change:** Would waive C-EVIDENCE; not actually applied here.
+            - **risk:** Only here to exercise a signed approval commit.
+            - **approved:**
+            """))
+        r = self._run("approve.py", "P-0001", "--on-behalf-of-clara", "ok")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+
+        v = self._run("validate.py")
+        self.assertNotIn("unsigned", v.stdout)
+        self.assertEqual(v.returncode, 0, v.stdout)
+        self.assertIn("signed", v.stdout)
+
     def test_completion_gate_blocks_met_goal(self):
         # Goal claimed met and its one criterion has evidence, but the checks were
         # never run -> the completion gate errors.

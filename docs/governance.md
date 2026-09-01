@@ -122,11 +122,19 @@ Attribution mode identifies approvals by commit author email, which anything wit
 access can set. Signing raises the bar a lot:
 
 ```
+# use your own signing key path in place of the example below
 git config gpg.format ssh
 git config user.signingkey ~/.ssh/id_ed25519.pub
 git config commit.gpgsign true
-printf 'ctsapugay@gmail.com %s' "$(cat ~/.ssh/id_ed25519.pub)" > governance/allowed_signers
+printf '%s %s\n' 'ctsapugay@gmail.com' "$(cat ~/.ssh/id_ed25519.pub)" > governance/allowed_signers
+git config gpg.ssh.allowedSignersFile "$(pwd)/governance/allowed_signers"
 ```
+
+That last line matters: without `gpg.ssh.allowedSignersFile` set, git cannot verify SSH
+signatures, so `git log`'s signature field reports a validly signed commit as *unsigned*
+and `validate.py` would wrongly flag it. (`validate.py` also passes the file explicitly
+when reading history, so it stays correct even in a fresh clone where you have not set the
+config yet — but set it, so your own `git log --show-signature` works too.)
 
 Once `governance/allowed_signers` exists, `approve.py` signs automatically and
 `validate.py`:

@@ -545,9 +545,14 @@ def approval_commits() -> list[ApprovalCommit]:
         return []
     sep = "\x1f"
     # Record separator goes FIRST: an empty %b would otherwise leave a ragged tail.
-    code, out = git(
-        "log", "--no-merges", f"--format=%x1e%H{sep}%ae{sep}%G?{sep}%s{sep}%b"
-    )
+    fmt = f"--format=%x1e%H{sep}%ae{sep}%G?{sep}%s{sep}%b"
+    args = ["log", "--no-merges", fmt]
+    # %G? only reports a verdict for SSH signatures when the allowed-signers file is
+    # configured; without it a validly signed commit shows as 'N'. Pass it so the
+    # signed/unsigned distinction validate.py relies on is correct in signed mode.
+    if ALLOWED_SIGNERS_FILE.exists():
+        args = ["-c", f"gpg.ssh.allowedSignersFile={ALLOWED_SIGNERS_FILE}"] + args
+    code, out = git(*args)
     if code != 0:
         return []
     commits: list[ApprovalCommit] = []
