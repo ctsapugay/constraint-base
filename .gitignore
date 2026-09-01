@@ -1,0 +1,20 @@
+# Local environment and secrets — constraint C-SECRETS
+.env
+.env.*
+*.pem
+*.key
+secrets/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Editors and OS
+.DS_Store
+.idea/
+*.swp
+
+# Local agent scratch that should not be committed
+.claude/settings.local.json
