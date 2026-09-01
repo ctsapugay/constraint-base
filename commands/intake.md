@@ -13,7 +13,7 @@ intake process exactly. Key points, so you do not have to re-derive them:
   imposed on her from outside — and then it needs a `why:` field.
 - Push back on vague answers. "Fast", "clean", "robust" are not outcomes until they are
   attached to something observable.
-- Show her the seven inherited defaults and ask whether any should be waived. Do not
+- Show her the nine inherited defaults and ask whether any should be waived. Do not
   encourage waiving.
 - Draft nothing to disk until she has agreed to the substance.
 
