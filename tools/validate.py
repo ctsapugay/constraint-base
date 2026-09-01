@@ -32,6 +32,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from constraint_files import (  # noqa: E402
+    CHECKS_FILE,
     CONSTRAINT_FILES,
     GOAL_FILE,
     OUTCOMES_FILE,
@@ -39,17 +40,20 @@ from constraint_files import (  # noqa: E402
     approval_commits,
     approvers,
     approved_ids,
+    check_waiver_signoffs,
     drift,
     git,
     governance_engaged,
     has_placeholders,
     in_git_repo,
     load_baseline,
+    load_checks,
     load_constraints,
     load_goal,
     load_proposals,
     parse_file,
     signing_configured,
+    suite_state,
     verify_signature,
 )
 
@@ -67,10 +71,13 @@ GOVERNED_PATHS = (
     "constraints/project.md",
     "goals/goal-condition.md",
     "goals/outcomes.md",
+    "checks/registry.md",
     "governance/baseline.txt",
     "governance/approvers.txt",
     "governance/allowed_signers",
 )
+
+CHECK_REQUIRED = ("run", "status")
 
 # --- outcome-shape heuristics -------------------------------------------------
 
@@ -575,6 +582,103 @@ def check_malformed_ids(report: Report) -> None:
                 f"({s.id or 'none'}) is not a 'G' criterion id. The loader will IGNORE "
                 "it, so it would not count toward the finish line. Give it an id like 'G2'.",
             )
+    for s in parse_file(CHECKS_FILE):
+        if s.get("run") and not (s.id and s.id.upper().startswith("CHK")):
+            report.warn(
+                s.where(),
+                f"section '{s.title}' has a 'run:' field but its id ({s.id or 'none'}) "
+                "is not a 'CHK' id. verify.py will IGNORE it. Give it an id like 'CHK-001'.",
+            )
+
+
+def check_checks(report: Report) -> None:
+    if not CHECKS_FILE.exists():
+        return
+    checks = load_checks()
+    signoffs = check_waiver_signoffs()
+    seen: dict[str, str] = {}
+    active = waived = 0
+    for c in checks:
+        where = c.where()
+        for key in CHECK_REQUIRED:
+            if not c.get(key):
+                report.error(f"{where} [{c.id}]", f"missing required field '{key}:'")
+        if c.id in seen:
+            report.error(f"{where} [{c.id}]", f"duplicate id, already used at {seen[c.id]}")
+        seen[c.id] = where
+
+        status = c.get("status").lower()
+        if status and status not in ("active", "waived"):
+            report.error(f"{where} [{c.id}]", f"status '{status}' is not active or waived")
+        if status == "waived":
+            waived += 1
+            if (c.id or "").upper() not in signoffs:
+                report.error(
+                    f"{where} [{c.id}]",
+                    "waived but not countersigned by Clara. A check waiver takes effect "
+                    "only through 'approve.py --waive-check' (a WAIVED-CHECK commit); until "
+                    "then this check still has to pass.",
+                )
+            if not c.get("waived"):
+                report.warn(f"{where} [{c.id}]", "waived without a 'waived:' reason")
+        else:
+            active += 1
+    if checks:
+        report.note(f"{active} active check(s), {waived} waived.")
+
+
+def report_completion(report: Report) -> None:
+    status, criteria, _ = load_goal()
+    goal_state = status.get("state").lower() if status else ""
+    real = [g for g in criteria if not g.get("criterion", "").startswith("_Not yet")]
+    met = sum(1 for g in real if g.get("state").lower() == "met")
+    all_met = bool(real) and met == len(real)
+
+    s = suite_state()
+    if s["total"] == 0:
+        checks_line = "none registered yet" if CHECKS_FILE.exists() else "no check registry yet"
+    else:
+        parts = [f"{len(s['passing'])} passing"]
+        if s["failing"]:
+            parts.append(f"{len(s['failing'])} FAILING")
+        if s["unrun"]:
+            parts.append(f"{len(s['unrun'])} not run")
+        if s["waived_ok"]:
+            parts.append(f"{len(s['waived_ok'])} waived")
+        if s["waived_pending"]:
+            parts.append(f"{len(s['waived_pending'])} waiver(s) NOT countersigned")
+        checks_line = ", ".join(parts)
+        if s["stale"]:
+            checks_line += " — STALE, tree changed since last verify; re-run it"
+
+    report.note(f"Completion gate: criteria {met}/{len(real)} met; checks: {checks_line}.")
+
+    if goal_state != "met":
+        return  # not claiming done, so the gate is informational
+
+    reasons = []
+    if not all_met:
+        reasons.append("not every criterion is met")
+    if s["total"] > 0 and not s["ran"]:
+        reasons.append("checks have not been run (run tools/verify.py)")
+    if s["failing"] or s["unrun"]:
+        reasons.append("some checks are failing or did not run")
+    if s["waived_pending"]:
+        reasons.append("a check waiver is not countersigned")
+    if s["stale"]:
+        reasons.append("check results are stale — re-run tools/verify.py")
+    if reasons:
+        report.error(
+            "goals/goal-condition.md",
+            "goal state is 'met' but the completion gate is not satisfied: "
+            + "; ".join(reasons) + ".",
+        )
+    elif s["total"] == 0:
+        report.warn(
+            "checks/registry.md",
+            "goal marked met with no checks registered. The finish line rested on "
+            "criteria evidence alone; register checks if it should be re-verifiable.",
+        )
 
 
 def check_placeholders(report: Report) -> None:
@@ -601,8 +705,10 @@ def main(argv: list[str]) -> int:
     check_constraints(report, approved)
     check_goal(report)
     check_proposals(report, approved)
+    check_checks(report)
     check_governance(report)
     check_malformed_ids(report)
+    report_completion(report)
     check_placeholders(report)
 
     if report.errors:

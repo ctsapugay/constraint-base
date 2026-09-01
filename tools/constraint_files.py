@@ -21,6 +21,7 @@ Standard library only, by design. No install step.
 from __future__ import annotations
 
 import hashlib
+import json
 import re
 import subprocess
 from dataclasses import dataclass, field
@@ -35,6 +36,8 @@ CONSTRAINT_FILES = [
 GOAL_FILE = ROOT / "goals" / "goal-condition.md"
 OUTCOMES_FILE = ROOT / "goals" / "outcomes.md"
 LOG_FILE = ROOT / "progress" / "log.md"
+CHECKS_FILE = ROOT / "checks" / "registry.md"
+RESULTS_FILE = ROOT / "checks" / "results.json"
 
 PROPOSALS_DIR = ROOT / "proposals"
 GOVERNANCE_DIR = ROOT / "governance"
@@ -51,11 +54,15 @@ GOVERNED_TOOLS = (
     "approve.py",
     "brief.py",
     "status.py",
+    "verify.py",
 )
 
 APPROVAL_TOKEN_RE = re.compile(r"\bAPPROVED:\s*([Pp]-\d{3,5}(?:\s*,\s*[Pp]-\d{3,5})*|BASELINE)\b")
 # Marks an approval the agent executed on Clara's explicitly stated authority.
 ON_BEHALF_RE = re.compile(r'ON-BEHALF-OF-CLARA:\s*"?(?P<text>[^"\n]*)"?')
+# Clara's countersignature accepting a failing/skipped check. Like a waiver, it only
+# takes effect through this commit token, so an un-countersigned check-waiver still binds.
+CHECK_WAIVER_RE = re.compile(r"\bWAIVED-CHECK:\s*(CHK-[A-Za-z0-9-]+(?:\s*,\s*CHK-[A-Za-z0-9-]+)*)\b")
 
 # "## C-LOCAL — Development stays local"  /  "## G1 - Something"
 HEADING_RE = re.compile(r"^##\s+(?P<rest>.+?)\s*$")
@@ -183,6 +190,20 @@ def load_goal() -> tuple[Section | None, list[Section], str]:
     return status, criteria, section_text(GOAL_FILE, "statement")
 
 
+def load_checks() -> list[Section]:
+    """Every check in the registry (checks/registry.md). Missing file -> empty.
+
+    Checks are the executable verification suite. They live here, not in the goal
+    condition, so a complex project can register many of them without bloating the
+    finish line. Each carries a `run:` command that tools/verify.py executes.
+    """
+    out: list[Section] = []
+    for section in parse_file(CHECKS_FILE):
+        if section.id and section.id.upper().startswith("CHK"):
+            out.append(section)
+    return out
+
+
 def load_proposals() -> list[Section]:
     """Every proposal in proposals/, sorted by id. TEMPLATE.md is ignored."""
     if not PROPOSALS_DIR.exists():
@@ -279,7 +300,7 @@ def load_baseline() -> Baseline:
             baseline.updated = value
         elif key == "approved":
             baseline.approved.append(value.upper())
-        elif key in ("constraints", "goal", "tools", "trust"):
+        elif key in ("constraints", "goal", "tools", "trust", "checks"):
             baseline.digests[key] = value
     return baseline
 
@@ -342,6 +363,9 @@ def canonical_goal() -> str:
             )
         )
     lines.append(_norm(section_text(GOAL_FILE, "out of scope")))
+    # The completion gate is part of the finish line: it says the task is not done
+    # until the whole check suite is green or waived. Governed so it can't be softened.
+    lines.append(_norm(section_text(GOAL_FILE, "completion gate")))
     # Non-goals are the scope guard -- they stop an agent expanding the project on
     # its own initiative -- so they are governed too, even though they live in
     # outcomes.md rather than goal-condition.md.
@@ -383,6 +407,33 @@ def canonical_trust() -> str:
     return "\n".join(parts)
 
 
+def canonical_checks() -> str:
+    """The check suite's definition -- what must pass for the task to be complete.
+
+    Governs each check's id, title, what it covers, the command it runs, its status,
+    and its waiver backing. Deliberately excludes results (pass/fail/output/time),
+    which live in checks/results.json and change every run. The suite is governed so
+    an agent cannot make verification pass by deleting a failing check or quietly
+    rewriting what it runs.
+    """
+    lines = []
+    for c in load_checks():
+        lines.append(
+            "|".join(
+                _norm(x)
+                for x in (
+                    c.id or "",
+                    c.title,
+                    c.get("covers"),
+                    c.get("run"),
+                    c.get("status"),
+                    c.get("waived-by"),
+                )
+            )
+        )
+    return "\n".join(lines)
+
+
 def digest(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
@@ -393,6 +444,7 @@ def current_digests() -> dict[str, str]:
         "goal": digest(canonical_goal()),
         "tools": digest(canonical_tools()),
         "trust": digest(canonical_trust()),
+        "checks": digest(canonical_checks()),
     }
 
 
@@ -529,3 +581,103 @@ def verify_signature(sha: str) -> tuple[bool, str]:
         sha,
     )
     return code == 0, out.splitlines()[0] if out else ""
+
+
+def check_waiver_signoffs() -> set[str]:
+    """Check ids Clara has countersigned as waived, from ``WAIVED-CHECK:`` commits.
+
+    This is the analogue of ``approved_ids`` for checks: a check marked ``waived`` in
+    the registry only stops blocking completion if its id appears here. An
+    un-countersigned waiver has no effect -- the check still has to pass. As with
+    approvals, attribution mode makes the countersignature forgeable (an audit trail);
+    signing makes it a lock.
+    """
+    if not in_git_repo():
+        return set()
+    code, out = git("log", "--no-merges", "--format=%x1e%s%x1f%b")
+    if code != 0:
+        return set()
+    ids: set[str] = set()
+    for record in out.split("\x1e"):
+        if not record.strip():
+            continue
+        subject, _, body = record.partition("\x1f")
+        for match in CHECK_WAIVER_RE.finditer(f"{subject}\n{body}"):
+            ids.update(part.strip().upper() for part in match.group(1).split(","))
+    return ids
+
+
+def load_results() -> dict:
+    """The last recorded check run (checks/results.json), or {} if none/unreadable."""
+    if not RESULTS_FILE.exists():
+        return {}
+    try:
+        return json.loads(RESULTS_FILE.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+
+
+def tree_state() -> str:
+    """A fingerprint of the current working tree, for staleness detection.
+
+    Recorded when verify.py runs and recomputed later: if it differs, the code has
+    changed since the checks last ran, so their results may no longer hold and verify
+    should be re-run. Covers committed state (HEAD) and staged + unstaged content;
+    it does not track edits to untracked files. Empty outside a git repo.
+    """
+    if not in_git_repo():
+        return ""
+    parts = []
+    for args in (("rev-parse", "HEAD"), ("status", "--porcelain"), ("diff",), ("diff", "--cached")):
+        _code, out = git(*args)
+        parts.append(out)
+    return digest("\x1e".join(parts))
+
+
+def suite_state() -> dict:
+    """Read-only summary of the check suite from the last recorded run.
+
+    The single source of truth that verify.py, status.py and validate.py all agree on,
+    so the completion gate reads the same everywhere. Computes from the registry, the
+    stored results, and the countersignatures -- it does not run anything.
+    """
+    checks = load_checks()
+    results = load_results()
+    res = results.get("results", {}) if isinstance(results, dict) else {}
+    signoffs = check_waiver_signoffs()
+
+    active = [c for c in checks if c.get("status").lower() != "waived"]
+    waived = [c for c in checks if c.get("status").lower() == "waived"]
+
+    passing, failing, unrun = [], [], []
+    for c in active:
+        r = res.get(c.id)
+        if not isinstance(r, dict):
+            unrun.append(c.id)
+        elif r.get("passed"):
+            passing.append(c.id)
+        else:
+            failing.append(c.id)
+
+    waived_ok = [c.id for c in waived if (c.id or "").upper() in signoffs]
+    waived_pending = [c.id for c in waived if (c.id or "").upper() not in signoffs]
+
+    ran = bool(results)
+    # Staleness only matters when there are checks whose results could go out of date.
+    stale = ran and len(checks) > 0 and results.get("tree_state", "") != tree_state()
+    green = not failing and not unrun and not waived_pending
+
+    return {
+        "total": len(checks),
+        "passing": passing,
+        "failing": failing,
+        "unrun": unrun,
+        "waived_ok": waived_ok,
+        "waived_pending": waived_pending,
+        "ran": ran,
+        "ran_at": results.get("ran_at", "") if isinstance(results, dict) else "",
+        "stale": stale,
+        # The suite passes its part of the completion gate when it is green AND the
+        # results reflect the current tree. Vacuously green when no checks exist.
+        "gate_ok": green and not stale,
+    }

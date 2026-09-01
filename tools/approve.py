@@ -5,6 +5,7 @@
     python3 tools/approve.py --baseline        # engage governance (end of intake)
     python3 tools/approve.py P-0001 [P-0002]   # approve proposals, re-record baseline
     python3 tools/approve.py --decline P-0001  # decline a proposal
+    python3 tools/approve.py --waive-check CHK-001 "reason"   # countersign a failing check
 
 This script is FOR CLARA. It is not a lock -- anything with a shell can run it. What it
 does is make approval a deliberate, recorded, committed act, so that an approval which
@@ -39,14 +40,17 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from constraint_files import (  # noqa: E402
     BASELINE_FILE,
+    CHECKS_FILE,
     GOVERNANCE_DIR,
     LOG_FILE,
     PROPOSALS_DIR,
+    ROOT,
     current_digests,
     drift,
     git,
     in_git_repo,
     load_baseline,
+    load_checks,
     load_goal,
     load_proposals,
     signing_configured,
@@ -111,6 +115,7 @@ def _write_baseline(approved: list[str]) -> None:
         f"goal {digests['goal']}",
         f"tools {digests['tools']}",
         f"trust {digests['trust']}",
+        f"checks {digests['checks']}",
     ]
     lines += [f"approved {pid}" for pid in approved]
     BASELINE_FILE.write_text("\n".join(lines) + "\n", encoding="utf-8")
@@ -137,9 +142,36 @@ def _stamp_proposal(section, new_status: str) -> None:
     path.write_text(text, encoding="utf-8")
 
 
+def _stamp_check(check_id: str, reason: str) -> bool:
+    """Mark one registry entry waived, in place, without touching other entries."""
+    if not CHECKS_FILE.exists():
+        return False
+    text = CHECKS_FILE.read_text(encoding="utf-8")
+    block_re = re.compile(
+        rf"(^##\s+{re.escape(check_id)}\s+[—–-].*?)(?=^##\s|\Z)",
+        re.MULTILINE | re.DOTALL,
+    )
+    m = block_re.search(text)
+    if not m:
+        return False
+    block = m.group(1)
+
+    def set_field(b: str, key: str, value: str) -> str:
+        fre = re.compile(rf"^-\s+\*\*{key}:\*\*.*$", re.MULTILINE)
+        if fre.search(b):
+            return fre.sub(f"- **{key}:** {value}", b, count=1)
+        return b.rstrip() + f"\n- **{key}:** {value}\n"
+
+    block = set_field(block, "status", "waived")
+    block = set_field(block, "waived", reason)
+    block = set_field(block, "waived-by", f"countersigned by Clara {TODAY}")
+    CHECKS_FILE.write_text(text[: m.start(1)] + block + text[m.end(1) :], encoding="utf-8")
+    return True
+
+
 def _commit(message: str, on_behalf: str | None) -> int:
     first_line = message.splitlines()[0]
-    paths = ["constraints", "goals", "governance", "proposals"]
+    paths = ["constraints", "goals", "governance", "proposals", "checks"]
     if on_behalf is not None:
         message = message + f'\n\nON-BEHALF-OF-CLARA: "{on_behalf}"'
         _append_log(first_line, on_behalf)
@@ -149,9 +181,11 @@ def _commit(message: str, on_behalf: str | None) -> int:
         print("  ! Not a git repository. Baseline written, but not committed.")
         print("    Governance leans on git history; commit this yourself.")
         return 0
-    code, out = git("add", *paths)
-    if code != 0:
-        return _fail(f"git add failed: {out}")
+    existing = [p for p in paths if (ROOT / p).exists()]
+    if existing:
+        code, out = git("add", *existing)
+        if code != 0:
+            return _fail(f"git add failed: {out}")
     args = ["commit", "-m", message]
     if signing_configured():
         args.insert(1, "-S")
@@ -304,6 +338,37 @@ def cmd_decline(ids: list[str], on_behalf: str | None) -> int:
     return _commit(f"Decline proposal(s): {', '.join(wanted)}", None)
 
 
+def cmd_waive_check(check_id: str, reason: str, on_behalf: str | None) -> int:
+    """Countersign a failing/skipped check as acceptable. Clara's call.
+
+    Loosens the completion gate for one check, so it is a governed act: recorded as a
+    WAIVED-CHECK commit that verify.py and validate.py check for. Until this runs, a
+    check marked waived by hand keeps binding.
+    """
+    check_id = check_id.upper()
+    ids = {(c.id or "").upper() for c in load_checks()}
+    if check_id not in ids:
+        return _fail(f"No such check: {check_id}. See checks/registry.md.")
+    if not reason.strip():
+        return _fail("A check waiver needs a reason. Say why it is acceptable for this "
+                     "check not to pass.")
+
+    print(f"\n[{check_id}] waive this check — the completion gate will accept it as")
+    print(f"    passing without it running. Reason: {reason}")
+    if not _confirm("\nCountersign this waiver?", on_behalf):
+        return _fail("Cancelled. Nothing written.")
+
+    if not _stamp_check(check_id, reason):
+        return _fail(f"Could not find {check_id} in {CHECKS_FILE.name} to stamp.")
+    if load_baseline().exists:
+        _write_baseline(load_baseline().approved)
+
+    return _commit(
+        f"WAIVED-CHECK: {check_id}\n\n{reason}",
+        on_behalf,
+    )
+
+
 def main(argv: list[str]) -> int:
     on_behalf: str | None = None
     if "--on-behalf-of-clara" in argv:
@@ -319,6 +384,13 @@ def main(argv: list[str]) -> int:
         argv = argv[:i] + argv[i + 2 :]
 
     args = argv
+
+    if "--waive-check" in args:
+        i = args.index("--waive-check")
+        rest = [a for a in args[i + 1 :] if not a.startswith("--")]
+        if len(rest) < 2:
+            return _fail('Usage: python3 tools/approve.py --waive-check CHK-001 "reason"')
+        return cmd_waive_check(rest[0], rest[1], on_behalf)
 
     if not args or "--status" in args:
         return cmd_status()

@@ -16,5 +16,9 @@ venv/
 .idea/
 *.swp
 
+# Check results are a fresh, per-run record, not approved state. Regenerate with
+# tools/verify.py; never rely on a committed green result.
+checks/results.json
+
 # Local agent scratch that should not be committed
 .claude/settings.local.json

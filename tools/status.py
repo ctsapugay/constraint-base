@@ -43,6 +43,7 @@ from constraint_files import (  # noqa: E402
     load_proposals,
     recent_log_entries,
     signing_configured,
+    suite_state,
 )
 
 BAR_CELLS = 10
@@ -83,7 +84,14 @@ def collect() -> dict:
         head = entries[-1].splitlines()[0]
         last_title = head[3:].strip() if head.startswith("## ") else head.strip()
 
+    suite = suite_state()
+    all_criteria_met = total > 0 and met == total
+    complete = all_criteria_met and suite["gate_ok"] and (suite["ran"] or suite["total"] == 0)
+
     return {
+        "suite": suite,
+        "all_criteria_met": all_criteria_met,
+        "complete": complete,
         "goal_state": goal_state,
         "statement": statement,
         "criteria_total": total,
@@ -161,6 +169,29 @@ def render_text(s: dict) -> str:
         out.append(f"  Governance: engaged, no drift ({mode})")
     if s["proposals_pending"]:
         out.append(f"  Proposals: {s['proposals_pending']} awaiting your sign-off")
+    out.append("")
+
+    su = s["suite"]
+    out.append("Verification")
+    if su["total"] == 0:
+        out.append("  no checks registered")
+    else:
+        line = f"  checks: {len(su['passing'])} passing"
+        if su["failing"]:
+            line += f", {len(su['failing'])} FAILING"
+        if su["unrun"]:
+            line += f", {len(su['unrun'])} not run"
+        if su["waived_ok"]:
+            line += f", {len(su['waived_ok'])} waived"
+        if su["waived_pending"]:
+            line += f", ⚠ {len(su['waived_pending'])} waiver(s) not countersigned"
+        out.append(line)
+        if su["stale"]:
+            out.append("  ⚠ results are STALE — code changed since last verify; re-run it")
+    gate = "✓ COMPLETE" if s["complete"] else "not yet"
+    out.append(f"  completion gate: {gate}  "
+               f"(criteria {'met' if s['all_criteria_met'] else 'incomplete'}, "
+               f"suite {'green' if su['gate_ok'] else 'not green'})")
     out.append("")
 
     out.append("Activity")
@@ -294,6 +325,26 @@ body{margin:0;background:var(--ground);color:var(--ink);
 .foot{color:var(--faint);font-size:12px;text-align:center;line-height:1.6;
   padding-top:4px}
 .foot .mono{color:var(--muted)}
+.gate{display:flex;align-items:center;gap:10px;border-radius:12px;padding:13px 15px;
+  margin-bottom:12px;font-weight:600;font-size:14px;border:1px solid transparent;
+  box-shadow:var(--shadow)}
+.gate--ok{background:var(--ok-soft);color:var(--ok);border-color:color-mix(in srgb,var(--ok) 25%,transparent)}
+.gate--no{background:var(--surface);color:var(--muted);border-color:var(--line)}
+.gate--bad{background:var(--bad-soft);color:var(--bad);border-color:color-mix(in srgb,var(--bad) 30%,transparent)}
+.gate__icon{font-size:17px;line-height:1}
+.tiles{display:grid;grid-template-columns:repeat(4,1fr);gap:9px}
+.tile{background:var(--surface);border:1px solid var(--line);border-radius:10px;
+  padding:12px 8px;text-align:center;box-shadow:var(--shadow)}
+.tile__n{font-family:"IBM Plex Mono",monospace;font-size:23px;font-weight:600;
+  font-variant-numeric:tabular-nums;line-height:1;color:var(--faint)}
+.tile__l{font-size:10px;letter-spacing:.07em;text-transform:uppercase;color:var(--faint);
+  margin-top:6px}
+.tile--ok .tile__n{color:var(--ok)}
+.tile--bad .tile__n{color:var(--bad)}
+.tile--warn .tile__n{color:var(--warn)}
+.stale{margin-top:10px;font-size:12.5px;color:var(--warn);background:var(--warn-soft);
+  border-radius:8px;padding:9px 11px}
+.subtle{color:var(--faint);font-size:12px;margin:11px 2px 0}
 @media (max-width:460px){
   .head{flex-direction:column;text-align:center;align-items:center}
   .badge{align-self:center}
@@ -413,6 +464,46 @@ def _rails_html(s: dict) -> str:
     return "".join(parts)
 
 
+def _verify_html(s: dict) -> str:
+    su = s["suite"]
+    if su["total"] == 0:
+        return ('<div class="rails"><p class="head__sub">No checks registered yet. '
+                "Register the project's checks in the registry so the finish line stays "
+                "re-verifiable, not just claimed.</p></div>")
+
+    if s["complete"]:
+        gate = ('<div class="gate gate--ok"><span class="gate__icon">✓</span>'
+                "Complete — every criterion met and the check suite is green.</div>")
+    elif su["failing"] or su["waived_pending"] or su["stale"]:
+        why = "checks are failing" if su["failing"] else (
+            "a check waiver is not countersigned" if su["waived_pending"] else
+            "results are stale")
+        gate = (f'<div class="gate gate--bad"><span class="gate__icon">●</span>'
+                f"Not complete — {why}.</div>")
+    else:
+        gate = ('<div class="gate gate--no"><span class="gate__icon">◔</span>'
+                "In progress — not every check is passing yet.</div>")
+
+    waived_total = len(su["waived_ok"]) + len(su["waived_pending"])
+    tiles = [
+        ("ok", len(su["passing"]), "passing"),
+        ("bad" if su["failing"] else "", len(su["failing"]), "failing"),
+        ("warn" if su["waived_pending"] else "", waived_total, "waived"),
+        ("", len(su["unrun"]), "not run"),
+    ]
+    tilehtml = "".join(
+        f'<div class="tile tile--{cls}"><div class="tile__n">{n}</div>'
+        f'<div class="tile__l">{lbl}</div></div>'
+        for cls, n, lbl in tiles
+    )
+    stale = ('<div class="stale">Results are stale — the code changed since verify last '
+             'ran. Re-run <span class="mono">tools/verify.py</span> to re-prove it.</div>'
+             if su["stale"] else "")
+    ran = f'last run {_esc(su["ran_at"][:16])}' if su["ran"] else "never run"
+    return (f'{gate}<div class="tiles">{tilehtml}</div>{stale}'
+            f'<p class="subtle">Checks live in the registry, not the finish line · {ran}</p>')
+
+
 def render_html(s: dict) -> str:
     """Self-contained dashboard body. Publish as an Artifact; no server needed."""
     if s["criteria_total"]:
@@ -451,6 +542,12 @@ def render_html(s: dict) -> str:
     <div class="sec__label"><h2>Proof of progress</h2>
       <span class="sec__count">{s["criteria_met"]}/{s["criteria_total"]} met</span></div>
     {_criteria_html(s)}
+  </section>
+
+  <section>
+    <div class="sec__label"><h2>Verification</h2>
+      <span class="sec__count">{len(s["suite"]["passing"])}/{len(s["suite"]["passing"]) + len(s["suite"]["failing"]) + len(s["suite"]["unrun"])} checks</span></div>
+    {_verify_html(s)}
   </section>
 
   <section>

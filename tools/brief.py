@@ -35,6 +35,7 @@ from constraint_files import (  # noqa: E402
     load_proposals,
     recent_log_entries,
     signing_configured,
+    suite_state,
 )
 
 WIDTH = 88
@@ -141,12 +142,38 @@ def show_goal() -> None:
             ))
         print()
 
+    su = suite_state()
+    if su["total"]:
+        bits = [f"{len(su['passing'])} passing"]
+        if su["failing"]:
+            bits.append(f"{len(su['failing'])} FAILING")
+        if su["unrun"]:
+            bits.append(f"{len(su['unrun'])} not run")
+        if su["waived_ok"]:
+            bits.append(f"{len(su['waived_ok'])} waived")
+        if su["waived_pending"]:
+            bits.append(f"{len(su['waived_pending'])} waiver(s) not countersigned")
+        line = "  checks: " + ", ".join(bits)
+        if su["stale"]:
+            line += "  [STALE -- re-run tools/verify.py]"
+        print(line)
+        print()
+
     if criteria:
+        all_met = met == len(criteria)
+        gate_ok = all_met and su["gate_ok"] and (su["ran"] or su["total"] == 0)
         print(f"  {met}/{len(criteria)} criteria met.")
-        if met == len(criteria):
+        if all_met and not gate_ok:
             print(wrap(
-                "All criteria are met. The work is finished -- stop here rather than "
-                "looking for more to improve.",
+                "! Criteria are all met but the completion gate is NOT satisfied -- the "
+                "check suite is failing, stale, or unrun. Run 'python3 tools/verify.py'. "
+                "Not done until it is green.",
+                indent="  ",
+            ))
+        elif gate_ok:
+            print(wrap(
+                "All criteria met and the check suite is green. The work is finished -- "
+                "stop here rather than looking for more to improve.",
                 indent="  ",
             ))
         print()

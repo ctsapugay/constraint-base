@@ -26,6 +26,26 @@ always possible, it is a direction, not a finish line.
 **Silent on how.** It says what is true at the end, never what happens in between. Same
 rules as `docs/outcome-vs-implementation.md`.
 
+## Criteria vs. checks
+
+Two layers, deliberately separate:
+
+- **Criteria** live here, in the goal condition. They are the few, human-meaningful
+  statements of what "done" means — aim for three to seven. Each has a prose `check:`
+  describing how you'd confirm it. A criterion's `state:` is a claim, recorded once when
+  it was first confirmed.
+- **Checks** live in `checks/registry.md`, outside the goal condition, and there can be
+  many. Each is an executable command that `tools/verify.py` runs; it passes or fails on
+  the project's real behaviour, every time. A complex project might have dozens — keeping
+  them out of the finish line is what stops the finish line becoming a task list.
+
+The link between them is the **completion gate**, a standing clause every goal condition
+carries: the task is done only when every criterion is met *and* `verify.py` is green —
+every check passing, or waived with Clara's countersignature. The criteria say what done
+means; the checks prove it still holds at the end, not just when a box was first ticked.
+A regression that breaks a passing check turns the suite red and re-opens the finish line.
+Don't enumerate individual checks here; register them, and let the gate require the suite.
+
 ## Aspirational vs. checkable
 
 | Aspirational | Checkable |

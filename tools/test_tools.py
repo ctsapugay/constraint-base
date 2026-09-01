@@ -195,6 +195,20 @@ Dates are typed by hand.
 
 LOG = "# Progress log\n\n---\n\n## 2020-01-01 — Created\n\n- Scaffolded.\n"
 
+CHECKS = """\
+# Check registry
+
+## CHK-001 — trivially true
+- **run:** true
+- **status:** active
+
+## CHK-002 — goal file exists
+- **run:** test -f goals/goal-condition.md
+- **status:** active
+"""
+
+GITIGNORE = "checks/results.json\n"
+
 
 class IntegrationTests(unittest.TestCase):
     def setUp(self):
@@ -214,11 +228,14 @@ class IntegrationTests(unittest.TestCase):
         self._write("constraints/project.md", PROJECT)
         self._write("goals/goal-condition.md", GOAL)
         self._write("goals/outcomes.md", OUTCOMES)
+        self._write("checks/registry.md", CHECKS)
+        self._write(".gitignore", GITIGNORE)
         self._write("governance/approvers.txt", "test@example.com\n")
         self._write("progress/log.md", LOG)
         (self.dir / "proposals").mkdir(parents=True, exist_ok=True)
         (self.dir / "tools").mkdir(parents=True, exist_ok=True)
-        for name in ("constraint_files.py", "validate.py", "approve.py", "brief.py", "status.py"):
+        for name in ("constraint_files.py", "validate.py", "approve.py", "brief.py",
+                     "status.py", "verify.py"):
             shutil.copy(TOOLS_DIR / name, self.dir / "tools" / name)
         self._git("init", "-q")
         self._git("config", "user.email", "test@example.com")
@@ -331,6 +348,62 @@ class IntegrationTests(unittest.TestCase):
             """))
         r = self._run("validate.py")
         self.assertIn("IGNORE", r.stdout)
+
+    # -- checks layer --
+
+    def test_verify_green_when_checks_pass(self):
+        r = self._run("verify.py")
+        self.assertEqual(r.returncode, 0, r.stdout)
+        self.assertIn("GREEN", r.stdout)
+        self.assertTrue((self.dir / "checks/results.json").exists())
+
+    def test_failing_check_blocks_verify(self):
+        self._write("checks/registry.md", CHECKS + textwrap.dedent("""\
+            ## CHK-003 — always fails
+            - **run:** false
+            - **status:** active
+            """))
+        r = self._run("verify.py")
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("FAIL", r.stdout)
+        self.assertIn("CHK-003", r.stdout)
+
+    def test_registry_change_is_drift(self):
+        self._baseline()
+        self._write("checks/registry.md", CHECKS.replace("test -f goals/goal-condition.md", "true"))
+        r = self._run("validate.py")
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("checks", r.stdout)
+
+    def test_waived_check_needs_countersign(self):
+        # Mark CHK-002 waived by hand — no countersign yet: still required.
+        self._write("checks/registry.md", CHECKS.replace(
+            "## CHK-002 — goal file exists\n- **run:** test -f goals/goal-condition.md\n- **status:** active\n",
+            "## CHK-002 — goal file exists\n- **run:** test -f goals/goal-condition.md\n"
+            "- **status:** waived\n- **waived:** not needed for the test\n",
+        ))
+        r = self._run("validate.py")
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("not countersigned", r.stdout)
+        # Now countersign it, and the error clears.
+        r2 = self._run("approve.py", "--waive-check", "CHK-002", "not needed for the test",
+                       "--on-behalf-of-clara", "ok")
+        self.assertEqual(r2.returncode, 0, r2.stdout + r2.stderr)
+        self._git("add", "-A"); self._git("commit", "-q", "-m", "tidy")
+        r3 = self._run("validate.py")
+        self.assertNotIn("not countersigned", r3.stdout)
+
+    def test_completion_gate_blocks_met_goal(self):
+        # Goal claimed met and its one criterion has evidence, but the checks were
+        # never run -> the completion gate errors.
+        met_goal = GOAL.replace(
+            "- **state:** unmet\n- **evidence:**",
+            "- **state:** met\n- **evidence:** 2020-01-02 ran it, ok",
+        ).replace("- **state:** approved", "- **state:** met")
+        self._write("goals/goal-condition.md", met_goal)
+        r = self._run("validate.py")
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("completion gate is not satisfied", r.stdout)
 
 
 if __name__ == "__main__":

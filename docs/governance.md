@@ -35,9 +35,19 @@ governed content, in four areas:
 - `trust` — `governance/approvers.txt` and `governance/allowed_signers`, the files that
   decide whose approvals and signatures count. Without this, an agent could add its own
   address or key and approve as itself with nothing showing as drift.
+- `checks` — the check registry (`checks/registry.md`): each check's id, command, status
+  and waiver backing. Not the results (those change every run) — the suite's *definition*.
+  Without this, an agent could make verification pass by deleting a failing check or
+  rewriting what it runs.
 
 `validate.py` recomputes and compares. Any change to a rule, a criterion, a non-goal, the
-checking tools, or the trust roots without a matching approval shows up as an error.
+checking tools, the trust roots, or the check suite without a matching approval shows up
+as an error.
+
+Check waivers work exactly like constraint waivers: a check marked `waived` in the registry
+takes effect only when Clara countersigns it with `approve.py --waive-check`, which records
+a `WAIVED-CHECK: CHK-00N` commit. Until then the check still has to pass — an
+un-countersigned check waiver binds, just as an unapproved constraint waiver does.
 
 The digest deliberately excludes each criterion's `state:` and `evidence:`, and the
 goal's own `state:`. Those change constantly during normal work. The finish line is

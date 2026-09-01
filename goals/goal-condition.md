@@ -41,6 +41,20 @@ _Not yet drafted._
 - **state:** unmet
 - **evidence:**
 
+## Completion gate
+
+The task is complete only when **every criterion above is met with real evidence** and
+**`python3 tools/verify.py` is green** — every check in `checks/registry.md` passing, or
+waived with Clara's countersignature (`approve.py --waive-check`) — on the current code.
+The individual checks are not listed here; they live in the registry so the finish line
+stays readable however many there are. A criterion's `state:` is a claim recorded once;
+the checks are re-run, so this gate is what proves the project still works at the end, not
+just that it worked when a criterion was first ticked.
+
+This clause is standing: it is the same for every project and is not the agent's to
+soften. `tools/validate.py` enforces it — marking the goal `met` while the suite is red,
+stale, or unrun is an error.
+
 ## Out of scope for "done"
 
 <!-- INTAKE: things that will still be imperfect when the goal condition is met, and
