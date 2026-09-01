@@ -332,16 +332,27 @@ body{margin:0;background:var(--ground);color:var(--ink);
 .gate--no{background:var(--surface);color:var(--muted);border-color:var(--line)}
 .gate--bad{background:var(--bad-soft);color:var(--bad);border-color:color-mix(in srgb,var(--bad) 30%,transparent)}
 .gate__icon{font-size:17px;line-height:1}
-.tiles{display:grid;grid-template-columns:repeat(4,1fr);gap:9px}
-.tile{background:var(--surface);border:1px solid var(--line);border-radius:10px;
-  padding:12px 8px;text-align:center;box-shadow:var(--shadow)}
-.tile__n{font-family:"IBM Plex Mono",monospace;font-size:23px;font-weight:600;
-  font-variant-numeric:tabular-nums;line-height:1;color:var(--faint)}
-.tile__l{font-size:10px;letter-spacing:.07em;text-transform:uppercase;color:var(--faint);
-  margin-top:6px}
-.tile--ok .tile__n{color:var(--ok)}
-.tile--bad .tile__n{color:var(--bad)}
-.tile--warn .tile__n{color:var(--warn)}
+.segbar{display:flex;height:18px;border-radius:9px;overflow:hidden;
+  background:var(--surface-2);border:1px solid var(--line)}
+.seg{min-width:5px;height:100%}
+.seg--pass{background:var(--ok)}
+.seg--waive{background:var(--warn)}
+.seg--fail{background:var(--bad)}
+.seg--todo{background:repeating-linear-gradient(45deg,
+  var(--faint),var(--faint) 3px,transparent 3px,transparent 7px)}
+.legend{display:flex;flex-wrap:wrap;gap:10px 18px;margin-top:13px}
+.legend__i{display:flex;align-items:center;gap:7px;font-size:12.5px;color:var(--muted)}
+.legend__i.is-zero{opacity:.4}
+.legend__n{font-family:"IBM Plex Mono",monospace;font-weight:600;color:var(--ink);
+  font-variant-numeric:tabular-nums}
+.legend__i.is-zero .legend__n{color:var(--muted)}
+.swatch{width:12px;height:12px;border-radius:3px;flex:0 0 auto}
+.sw--pass{background:var(--ok)}
+.sw--waive{background:var(--warn)}
+.sw--fail{background:var(--bad)}
+.sw--todo{background:repeating-linear-gradient(45deg,
+  var(--faint),var(--faint) 2px,transparent 2px,transparent 4px);
+  border:1px solid var(--faint)}
 .stale{margin-top:10px;font-size:12.5px;color:var(--warn);background:var(--warn-soft);
   border-radius:8px;padding:9px 11px}
 .subtle{color:var(--faint);font-size:12px;margin:11px 2px 0}
@@ -484,24 +495,34 @@ def _verify_html(s: dict) -> str:
         gate = ('<div class="gate gate--no"><span class="gate__icon">◔</span>'
                 "In progress — not every check is passing yet.</div>")
 
+    total = su["total"]
     waived_total = len(su["waived_ok"]) + len(su["waived_pending"])
-    tiles = [
-        ("ok", len(su["passing"]), "passing"),
-        ("bad" if su["failing"] else "", len(su["failing"]), "failing"),
-        ("warn" if su["waived_pending"] else "", waived_total, "waived"),
-        ("", len(su["unrun"]), "not run"),
+    # order: good -> neutral -> bad, so red draws the eye at the end
+    cats = [
+        ("pass", "passing", len(su["passing"])),
+        ("waive", "waived", waived_total),
+        ("todo", "not run", len(su["unrun"])),
+        ("fail", "failing", len(su["failing"])),
     ]
-    tilehtml = "".join(
-        f'<div class="tile tile--{cls}"><div class="tile__n">{n}</div>'
-        f'<div class="tile__l">{lbl}</div></div>'
-        for cls, n, lbl in tiles
+    segs = "".join(
+        f'<div class="seg seg--{key}" style="width:{100 * n / total:.1f}%" '
+        f'title="{lbl}: {n}"></div>'
+        for key, lbl, n in cats if n > 0
+    )
+    legend = "".join(
+        f'<div class="legend__i{" is-zero" if n == 0 else ""}">'
+        f'<span class="swatch sw--{key}"></span>'
+        f'<span class="legend__n">{n}</span> {lbl}</div>'
+        for key, lbl, n in cats
     )
     stale = ('<div class="stale">Results are stale — the code changed since verify last '
              'ran. Re-run <span class="mono">tools/verify.py</span> to re-prove it.</div>'
              if su["stale"] else "")
     ran = f'last run {_esc(su["ran_at"][:16])}' if su["ran"] else "never run"
-    return (f'{gate}<div class="tiles">{tilehtml}</div>{stale}'
-            f'<p class="subtle">Checks live in the registry, not the finish line · {ran}</p>')
+    return (f'{gate}<div class="segbar" role="img" '
+            f'aria-label="{len(su["passing"])} of {total} checks passing">{segs}</div>'
+            f'<div class="legend">{legend}</div>{stale}'
+            f'<p class="subtle">{total} checks in the registry, not the finish line · {ran}</p>')
 
 
 def render_html(s: dict) -> str:
