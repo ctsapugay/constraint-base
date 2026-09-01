@@ -50,6 +50,27 @@ just when a box was first ticked — a regression that breaks a passing check tu
 red and re-opens the finish line. Don't enumerate criteria or checks in the goal condition;
 put them in their files and let the contract require them.
 
+## The goal condition enforces the constraint system
+
+The completion contract does not only require the criteria and checks — it requires that
+the run stayed **inside** the constraint system. The template's "What completion requires"
+opens with a standing clause to that effect: the work is carried out within the system, not
+alongside it; the agent stays bound by the constraints and works the way `CLAUDE.md`
+describes; nothing governed changes except through an approved proposal; and reaching the
+criteria by ignoring a constraint or bypassing governance is **not** "done".
+
+Keep that clause when you draft a goal condition — it is standing and identical for every
+project, so do not remove or weaken it at intake. It is what stops a goal-mode agent from
+treating the constraint system as optional scaffolding: because the clause lives in the
+governed part of the goal condition, bypassing the system fails the finish line rather than
+relying on the agent to remember the rules.
+
+This is a rule about the agent's conduct within the constraint system, not about the
+project's implementation, so it is a legitimate part of the finish line (see the governance
+note in `docs/outcome-vs-implementation.md`) — and it is checkable by its consequences:
+`validate.py` and git history show whether anything governed changed without approval, and
+each constraint carries its own outside check.
+
 ## Aspirational vs. checkable
 
 | Aspirational | Checkable |
