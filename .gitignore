@@ -20,5 +20,9 @@ venv/
 # tools/verify.py; never rely on a committed green result.
 checks/results.json
 
+# Generated dashboard and its Artifact URL (the /board command). Local, not approved state.
+checks/board.html
+checks/board-url.txt
+
 # Local agent scratch that should not be committed
 .claude/settings.local.json

@@ -198,7 +198,7 @@ tools/
   selfcheck.sh            git-only tripwire on the tools themselves
   test_tools.py           tests for the above
   constraint_files.py     shared parser + governance helpers
-commands/                 optional slash commands: intake, reground, goal-check, propose
+commands/                 optional slash commands: intake, reground, goal-check, propose, board
 ```
 
 The slash commands are inert until copied into place:

@@ -219,8 +219,9 @@ C-RESUMABLE), because that log is exactly what the observer — and the next ses
 
 ## Optional shortcuts
 
-`commands/` holds four slash commands — `intake`, `reground`, `goal-check`, `propose` —
-that wrap the things above. They are live only if copied into `.claude/commands/`:
+`commands/` holds five slash commands — `intake`, `reground`, `goal-check`, `propose`, and
+`board` (render the phone dashboard and update its Artifact link) — that wrap the things
+above. They are live only if copied into `.claude/commands/`:
 
 ```
 mkdir -p .claude/commands && cp commands/*.md .claude/commands/
