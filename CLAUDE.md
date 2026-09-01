@@ -174,20 +174,30 @@ directory**:
 - **The observer.** A second session, typically hers over Remote Control from her phone,
   that she talks to for status and clarity **without interrupting the worker**.
 
-Because everything here is plain files with no state outside them, the observer just reads
-what the worker writes. If you are the observer:
+The observer has two windows into the worker, and should use both. If you are the observer:
 
+- **The repo files** — the deliberate record. `python3 tools/status.py` is the one-screen
+  answer to "how far along, and is it the right direction?" (it shows each criterion's
+  check and its evidence; `--html` renders a dashboard to publish as an Artifact for the
+  phone). `python3 tools/brief.py` and `progress/log.md` give the fuller picture. This is
+  what the worker chose to write down.
+- **The worker's live session** — the raw record. You can read the worker's actual
+  conversation, not just its files: list the sessions (`list_sessions`), read the one
+  you want (`list_events`), or search across them (`search_session_transcripts`); the
+  transcript also sits on disk at `~/.claude/projects/<slug>/<id>.jsonl`. This shows what
+  the worker said and did turn by turn — richer than the files, and reading it does not
+  interrupt the worker. What it does not show is reasoning the worker never surfaced, so
+  the log still matters. For steering (not just watching), Remote Control the worker
+  session itself — but messages there enter its turn and can redirect it, which is the
+  thing this split is meant to avoid.
 - **You are read-only over the constraint system.** Report what you see; do not edit
   `constraints/`, `goals/`, `progress/log.md`, or run `approve.py`. Those belong to the
   worker's turn and to Clara. Answer her questions and check in when she prompts.
-- **`status.py` is your main tool.** `python3 tools/status.py` is the one-screen answer to
-  "how far along, anything wrong?" — short enough to read on a phone. `python3
-  tools/brief.py` and reading `progress/log.md` give the fuller picture.
 - **Same directory, not a worktree.** The observer must share the worker's working
   directory so it sees live progress; a separate git worktree would show a stale copy.
 - **Don't run the worker's checks as if they were yours.** Reading a criterion's `check:`
   is fine; re-running side-effecting build or test commands from the observer can collide
-  with the worker. Prefer reading the log and `status.py`.
+  with the worker. Prefer reading the log, the session, and `status.py`.
 
 If you are the worker, nothing changes: keep logging at every natural break (constraint
 C-RESUMABLE), because that log is exactly what the observer — and the next session — reads.
