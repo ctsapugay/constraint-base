@@ -5,6 +5,7 @@
     python3 tools/brief.py --goal      # just the goal condition and criteria
     python3 tools/brief.py --rules     # just the constraints
     python3 tools/brief.py --pending   # just governance: proposals and drift
+    python3 tools/brief.py --working   # just the checkpoint and open blockers
 
 Run this at the start of a session, and again periodically during a long run: after
 finishing a chunk of work, before a decision that would be expensive to reverse, or
@@ -27,12 +28,14 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from constraint_files import (  # noqa: E402
     approved_ids,
+    current_checkpoint,
     drift,
     governance_engaged,
     load_baseline,
     load_constraints,
     load_goal,
     load_proposals,
+    open_blockers,
     recent_log_entries,
     signing_configured,
     suite_state,
@@ -239,6 +242,43 @@ def show_governance() -> None:
         print()
 
 
+def show_working_state() -> None:
+    checkpoint = current_checkpoint()
+    blockers = open_blockers()
+
+    rule()
+    print(f"WORKING STATE -- {len(blockers)} open blocker(s)")
+    rule()
+
+    if checkpoint:
+        print("Checkpoint (where the work is now; overwrite it in place as you go):")
+        for line in checkpoint.splitlines():
+            print(f"  {line}")
+    else:
+        print("  No checkpoint yet -- keep progress/checkpoint.md current as you work.")
+    print()
+
+    if blockers:
+        print("Open blockers:")
+        for b in blockers:
+            print(f"  [{b.id}] {b.title}")
+            if b.get("what"):
+                print(wrap(b.get("what"), indent="      "))
+            if b.get("needs"):
+                print(wrap(f"needs: {b.get('needs')}", indent="      "))
+        print()
+        print(wrap(
+            "Move to an unblocked front rather than stopping. Surface these to Clara "
+            "together once every front is blocked (or sooner if one cannot wait). An "
+            "outcome-changing ambiguity is a blocker -- never resolve it by assumption "
+            "(C-SURFACE-AMBIGUITY).",
+            indent="  ",
+        ))
+    else:
+        print("  No open blockers.")
+    print()
+
+
 def show_progress(limit: int = 3) -> None:
     entries = recent_log_entries(limit)
     rule()
@@ -264,10 +304,14 @@ def main(argv: list[str]) -> int:
     if "--pending" in argv:
         show_governance()
         return 0
+    if "--working" in argv:
+        show_working_state()
+        return 0
 
     show_constraints()
     show_goal()
     show_governance()
+    show_working_state()
     show_progress()
     rule("-")
     print("Full detail: constraints/, goals/, proposals/, progress/log.md.")

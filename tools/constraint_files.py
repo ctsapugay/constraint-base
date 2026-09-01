@@ -37,6 +37,9 @@ GOAL_FILE = ROOT / "goals" / "goal-condition.md"
 CRITERIA_FILE = ROOT / "goals" / "criteria.md"
 OUTCOMES_FILE = ROOT / "goals" / "outcomes.md"
 LOG_FILE = ROOT / "progress" / "log.md"
+CHECKPOINT_FILE = ROOT / "progress" / "checkpoint.md"
+BLOCKERS_FILE = ROOT / "progress" / "blockers.md"
+PRIMING_FILE = ROOT / "progress" / "priming-prompt.md"
 CHECKS_FILE = ROOT / "checks" / "registry.md"
 RESULTS_FILE = ROOT / "checks" / "results.json"
 
@@ -258,6 +261,43 @@ def has_placeholders(path: Path) -> list[tuple[int, str]]:
                 found.append((lineno, raw.strip()))
                 break
     return found
+
+
+def open_blockers() -> list[Section]:
+    """Open entries from progress/blockers.md (``## B1 —`` ...). Missing file -> empty.
+
+    Working state, not governed. A running tally of what is stuck, so a long run can move
+    to another front instead of stalling, and so every open blocker can be surfaced to
+    Clara at once. A blocker is open unless its ``status:`` is ``resolved``.
+    """
+    out: list[Section] = []
+    for s in parse_file(BLOCKERS_FILE):
+        if s.id and s.id[0].upper() == "B" and s.id[1:].isdigit():
+            if s.get("status").lower() != "resolved":
+                out.append(s)
+    return out
+
+
+def current_checkpoint() -> str:
+    """The current-state card (progress/checkpoint.md), instructions stripped.
+
+    Overwritten in place at each break -- the "where am I right now" card, distinct from
+    the append-only history in log.md. The card is whatever follows the last ``---``
+    divider (so the file's own how-to header is ignored); comments and headings are
+    dropped. Empty string when the file is missing or the card is blank.
+    """
+    if not CHECKPOINT_FILE.exists():
+        return ""
+    text = CHECKPOINT_FILE.read_text(encoding="utf-8")
+    if "\n---\n" in text:
+        text = text.rsplit("\n---\n", 1)[1]
+    lines = []
+    for raw in text.splitlines():
+        stripped = raw.strip()
+        if not stripped or stripped.startswith("<!--") or stripped.startswith("#"):
+            continue
+        lines.append(stripped)
+    return "\n".join(lines).strip()
 
 
 def recent_log_entries(limit: int = 3) -> list[str]:

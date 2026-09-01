@@ -361,6 +361,36 @@ class IntegrationTests(unittest.TestCase):
         self.assertEqual(r.returncode, 1)
         self.assertIn("edited by hand", r.stdout)
 
+    def test_working_state_in_brief(self):
+        self._write("progress/blockers.md", textwrap.dedent("""\
+            # Blockers
+
+            ## B1 — need a naming decision
+            - **status:** open
+            - **what:** which store layout to use
+            - **needs:** a call from Clara
+
+            ## B2 — old thing
+            - **status:** resolved
+            - **what:** was stuck earlier
+            """))
+        self._write("progress/checkpoint.md", textwrap.dedent("""\
+            # Checkpoint
+
+            header prose that must not show as the card
+
+            ---
+
+            **Now:** wiring the parser
+            **Next:** add a test
+            """))
+        r = self._run("brief.py")
+        self.assertIn("WORKING STATE", r.stdout)
+        self.assertIn("B1", r.stdout)              # open blocker shown
+        self.assertNotIn("B2", r.stdout)           # resolved blocker not shown
+        self.assertIn("wiring the parser", r.stdout)  # card body shown
+        self.assertNotIn("must not show", r.stdout)   # pre-divider header stripped
+
     def test_malformed_constraint_id_warns(self):
         # Minor: a rule: under a non-C- id would be silently ignored by the loader.
         self._write("constraints/project.md", PROJECT + textwrap.dedent("""\
