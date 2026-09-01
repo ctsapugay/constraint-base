@@ -3,10 +3,16 @@
 These are inherited by every project cloned from this base. They are deliberately few
 and deliberately rule-shaped: each one says what must remain true, never how to build.
 
-**Editing rules for this file**
+**Who may edit this file**
 
-- Do not delete a default. To opt out, set `status: waived` and add a `waived:` field
-  explaining why. That keeps the opt-out visible in diffs and in review.
+Clara. Once she has approved a baseline (`tools/approve.py --baseline`), an agent may
+not add, alter, weaken, or remove anything here — see `C-GOVERNED-CHANGE` below and
+`docs/governance.md`. An agent that thinks a rule is wrong writes a proposal in
+`proposals/` and waits.
+
+- Do not delete a default. To opt out, set `status: waived`, give a reason, and point
+  `waived-by:` at a proposal Clara has approved. A waiver with no approved proposal has
+  no effect — `tools/brief.py` will keep listing the constraint as binding.
 - Do not add project-specific constraints here. They belong in `project.md`.
 - Every entry must keep the field set below. `tools/validate.py` enforces it.
 
@@ -19,7 +25,8 @@ and deliberately rule-shaped: each one says what must remain true, never how to 
 - **rule:** One sentence. What must remain true. Outcome-shaped.
 - **check:** How anyone can tell, from the outside, whether the rule held.
 - **why:** Optional. Required when the rule names a specific technology.
-- **waived:** Required only when status is waived.
+- **waived:** Required only when status is waived. The reason.
+- **waived-by:** Required only when status is waived. The approved proposal id.
 ```
 
 ---
@@ -66,6 +73,21 @@ and deliberately rule-shaped: each one says what must remain true, never how to 
 - **status:** active
 - **rule:** At any stopping point, someone starting a brand-new session with no memory of prior sessions can determine the current state of the project, what remains, and what was tried and rejected, from the repository alone.
 - **check:** `progress/log.md` has an entry for the most recent working session, and `python3 tools/brief.py` prints constraints, goal condition, and recent progress with no placeholders left unfilled.
+
+## C-GOVERNED-CHANGE — The rules are not the agent's to change
+
+- **source:** default
+- **status:** active
+- **rule:** Once Clara has approved a baseline, the standing constraints and the approved goal condition change only with her sign-off; anything the agent believes is wrong, mis-scoped, or blocking exists as a written proposal carrying its reasoning, and has no force until she approves it.
+- **check:** `python3 tools/validate.py` reports no governed content differing from the approved baseline, and every commit touching `constraints/`, `goals/goal-condition.md`, or `governance/baseline.txt` carries an approval Clara made.
+- **why:** An agent that can edit the rules can weaken them until a faulty project passes. Separating "what binds" from "what the agent wants to bind" is the whole point of keeping the constraints in files rather than in a conversation.
+
+## C-WAIVER-SIGNOFF — A waiver binds nothing until Clara approves it
+
+- **source:** default
+- **status:** active
+- **rule:** A waiver has no effect until Clara has approved it; until then the constraint it targets holds in full, exactly as if the waiver had never been written.
+- **check:** `python3 tools/validate.py` reports every waiver as backed by an approved proposal, and `python3 tools/brief.py` lists any constraint with an unapproved waiver among the rules in force.
 
 ## C-SURFACE-AMBIGUITY — Outcome-changing ambiguity goes to Clara
 

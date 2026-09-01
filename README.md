@@ -23,6 +23,9 @@ This repo is that context, as a handful of plain Markdown files:
 - **A progress log** — append-only, so a session with no memory of the last one can pick
   up where it left off.
 
+And a governance layer on top, because the obvious failure mode of writing constraints
+down is an agent that edits them when they get in the way.
+
 ## The one rule
 
 **Constraints and goals describe outcomes and rules. They never describe how to build
@@ -65,13 +68,45 @@ note technologies that are genuinely imposed on you.
 plus three to seven criteria, each with a check you could run yourself. You approve or
 edit it.
 
-**5. Goal mode.** The agent works toward the goal condition inside the constraints,
+**5. Engage governance.** `python3 tools/approve.py --baseline`. From here the
+constraints and the finish line are no longer the agent's to edit.
+
+**6. Goal mode.** The agent works toward the goal condition inside the constraints,
 re-grounding itself with `tools/brief.py` as it goes, marking criteria met only with
 real evidence, and logging progress. It stops when the criteria are met.
 
+If it thinks a rule is wrong, it writes a proposal and keeps working inside the rule.
+You review with `python3 tools/approve.py --status` and approve or decline.
+
+## Who may change the rules
+
+Nobody but you. An agent may propose; it may not enact.
+
+- **Proposals** live in `proposals/`, separate from approved state. Nothing reads them as
+  authority, so a proposal changes nothing by existing.
+- **Waivers are inert until approved.** A constraint marked `waived` only stops binding
+  when its `waived-by:` names a proposal in the approved baseline. Otherwise the loader
+  puts it back on the binding list and `brief.py` prints
+  `[WAIVER PENDING — STILL BINDING]`. You cannot be talked past this one; it is how the
+  list is computed.
+- **Approved content has a fingerprint** in `governance/baseline.txt` — rules, checks,
+  criteria, and the tool sources. `validate.py` recomputes it and reports drift.
+- **Approval is your commit.** `tools/approve.py` records it with `APPROVED: P-000N` in
+  the message. `validate.py` cross-checks the baseline against git history: every
+  approved id needs a real commit, from an email in `governance/approvers.txt`, and
+  `baseline.txt` must only ever change inside an approval commit.
+
+**What this actually enforces.** Waiver inertness and proposal inertness are structural —
+they hold whatever the agent decides to do. Everything else is *detection*: an agent with
+a shell can edit a constraint, and what stops that being invisible is drift detection
+plus git history, not a lock. In the default attribution mode, commit authorship is
+forgeable. Turn on SSH commit signing (four commands, in `docs/governance.md`) and
+`validate.py` will verify signatures instead, which raises the bar substantially. The doc
+says all of this plainly rather than overselling it — read it before you rely on it.
+
 ## The defaults
 
-Every project inherits seven rules, in `constraints/defaults.md`. They are deliberately
+Every project inherits nine rules, in `constraints/defaults.md`. They are deliberately
 few and deliberately rule-shaped:
 
 | | |
@@ -82,18 +117,23 @@ few and deliberately rule-shaped:
 | `C-SECRETS` | No credentials in tracked files. |
 | `C-EVIDENCE` | No completion claim without a check that was actually run. |
 | `C-RESUMABLE` | A fresh session can resume from the repo alone. |
+| `C-GOVERNED-CHANGE` | The standing constraints and the goal condition change only with your sign-off. |
+| `C-WAIVER-SIGNOFF` | A waiver binds nothing until you approve it. |
 | `C-SURFACE-AMBIGUITY` | Ambiguity that changes the outcome goes to you; the rest is the agent's call. |
 
-Any of them can be waived per project: set `status: waived` and give a reason. They are
-never deleted, so the opt-out shows up in the diff.
+Any of them can be waived per project — including the two governance rules, if you want a
+project where the agent has a free hand. Set `status: waived`, give a reason, and point
+`waived-by:` at a proposal you approved. They are never deleted, so the opt-out shows up
+in the diff.
 
 ## Tools
 
 Two small stdlib-only Python scripts. No dependencies, no install.
 
 ```
-python3 tools/brief.py       # constraints + goal condition + recent progress
-python3 tools/validate.py    # are the files well-formed and outcome-shaped?
+python3 tools/brief.py       # constraints + goal + pending proposals + progress
+python3 tools/validate.py    # well-formed, outcome-shaped, and unmodified?
+python3 tools/approve.py     # yours: approve, decline, re-baseline, check status
 ```
 
 `brief.py` is the re-grounding call — an agent runs it at the start of a session and
@@ -101,7 +141,9 @@ periodically during a long run. `--goal` prints just the goal condition and crit
 status.
 
 `validate.py` checks structure (required fields, unique IDs, no leftover placeholders,
-no criterion marked met without evidence) and flags likely implementation detail:
+no criterion marked met without evidence), checks governance (drift from the approved
+baseline, approvals without commits, a hand-edited baseline), and flags likely
+implementation detail:
 library names, file paths, pattern names, "use X", step sequences. Those are warnings, not
 errors — they are heuristics, and the point is to make you look at the line. `--strict`
 turns warnings into a nonzero exit.
@@ -119,15 +161,22 @@ goals/
   goal-condition.md       the finish line
 progress/
   log.md                  append-only session record
+proposals/
+  TEMPLATE.md             how to ask for a rule to change
+governance/
+  approvers.txt           whose approvals count
+  baseline.txt            written by approve.py once governance engages
 docs/
   outcome-vs-implementation.md
+  governance.md
   intake.md
   goal-conditions.md
 tools/
   brief.py
   validate.py
-  constraint_files.py     shared parser
-commands/                 optional slash commands: intake, reground, goal-check
+  approve.py
+  constraint_files.py     shared parser + governance helpers
+commands/                 optional slash commands: intake, reground, goal-check, propose
 ```
 
 The slash commands are inert until copied into place:
@@ -148,6 +197,9 @@ convention that a 200-line regex parser handles reliably, and that reads as pros
 **Nothing is generated.** There is no build step, no state outside the files, no
 lockfile. Edit anything by hand at any time; the tools read whatever is there.
 
-**The tools have no authority.** `validate.py` reports; it does not block. Nothing in the
-repo can stop an agent doing something — the constraints work by being read, which is why
-`CLAUDE.md` puts them in front of the agent before anything else.
+**The tools have limited authority, and the docs say which parts are real.**
+`validate.py` reports; it does not block. Most constraints work by being read, which is
+why `CLAUDE.md` puts them in front of the agent before anything else. The two places
+where structure does the work rather than persuasion — inert proposals and inert
+unapproved waivers — are called out as such in `docs/governance.md`, alongside an
+explicit list of what is only detectable after the fact.

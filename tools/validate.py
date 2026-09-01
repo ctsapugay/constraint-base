@@ -1,19 +1,26 @@
 #!/usr/bin/env python3
-"""Check that constraints and goals are well-formed and outcome-shaped.
+"""Check that constraints and goals are well-formed, outcome-shaped, and unmodified.
 
     python3 tools/validate.py            # report; exit 1 only on errors
     python3 tools/validate.py --strict   # exit 1 on warnings too
     python3 tools/validate.py --quiet    # only print problems
 
-ERRORS are structural: missing fields, duplicate ids, a criterion marked met with no
-evidence. They mean a tool or an agent will misread the file.
+Three kinds of finding:
+
+ERRORS are structural or governance failures: missing fields, duplicate ids, a criterion
+marked met with no evidence, a waiver with no approval, governed content that no longer
+matches what Clara approved.
 
 WARNINGS are heuristics for implementation detail leaking into a rule -- library names,
 file paths, pattern names, "use X", step sequences. They are guesses. Read the flagged
 line and decide. Do not edit this script to silence one; if a flagged line is genuinely
-fine, leave it and say why in progress/log.md.
+fine, leave it and say why in progress/log.md. (Note that this script's own source is
+part of the governed baseline, so editing it after governance is engaged shows up as
+drift.)
 
-See docs/outcome-vs-implementation.md.
+NOTES are context.
+
+See docs/outcome-vs-implementation.md and docs/governance.md.
 """
 
 from __future__ import annotations
@@ -29,17 +36,37 @@ from constraint_files import (  # noqa: E402
     GOAL_FILE,
     OUTCOMES_FILE,
     ROOT,
+    approval_commits,
+    approvers,
+    approved_ids,
+    drift,
+    git,
+    governance_engaged,
     has_placeholders,
+    in_git_repo,
+    load_baseline,
     load_constraints,
     load_goal,
-    parse_file,
+    load_proposals,
+    signing_configured,
+    verify_signature,
 )
 
 CONSTRAINT_REQUIRED = ("source", "status", "rule", "check")
 CRITERION_REQUIRED = ("criterion", "check", "state")
+PROPOSAL_REQUIRED = ("status", "kind", "targets", "because", "change")
 VALID_STATUS = ("active", "waived")
 VALID_CRITERION_STATE = ("unmet", "met")
 VALID_GOAL_STATE = ("draft", "approved", "met")
+VALID_PROPOSAL_STATUS = ("proposed", "approved", "declined", "withdrawn")
+VALID_PROPOSAL_KIND = ("waiver", "constraint-change", "goal-change", "new-constraint")
+
+GOVERNED_PATHS = (
+    "constraints/defaults.md",
+    "constraints/project.md",
+    "goals/goal-condition.md",
+    "governance/baseline.txt",
+)
 
 # --- outcome-shape heuristics -------------------------------------------------
 
@@ -62,7 +89,6 @@ PATTERNS = (
     "dependency-injection middleware orm dao dto"
 ).split()
 
-# imperative build verbs, only when they open a sentence
 IMPERATIVE_RE = re.compile(
     r"(?:^|\.\s+|;\s+)(use|add|create|build|implement|refactor|restructure|structure"
     r"|install|import|extend|inherit|wrap|split|merge|rename|move)\b",
@@ -73,15 +99,23 @@ MODAL_IMPERATIVE_RE = re.compile(
     r"(use|add|create|build|implement|refactor|install|import|extend|wrap)\b",
     re.IGNORECASE,
 )
-PATH_RE = re.compile(r"\b[\w.-]+/[\w./-]+|\b\w+\.(?:py|js|jsx|ts|tsx|go|rs|rb|java|json|ya?ml|toml|ini|cfg)\b")
+PATH_RE = re.compile(
+    r"\b[\w.-]+/[\w./-]+|\b\w+\.(?:py|js|jsx|ts|tsx|go|rs|rb|java|json|ya?ml|toml|ini|cfg)\b"
+)
 SEQUENCE_RE = re.compile(
-    r"\bstep\s*\d|\bfirst,|\bfirstly\b|;\s*then\b|\bthen\s+(?:the|it|we|you)\b"
+    r"\bstep\s*\d|\bfirst,|\bfirstly\b|;\s*then\b"
+    r"|(?<!until )\bthen\s+(?:the|it|we|you)\b"
     r"|\bafterwards\b|\bfinally,",
     re.IGNORECASE,
 )
-COVERAGE_RE = re.compile(r"\b\d{1,3}\s*%\s*(?:code\s*)?coverage\b|\bcoverage\s+(?:of|above|at least)\s*\d", re.IGNORECASE)
+COVERAGE_RE = re.compile(
+    r"\b\d{1,3}\s*%\s*(?:code\s*)?coverage\b|\bcoverage\s+(?:of|above|at least)\s*\d",
+    re.IGNORECASE,
+)
 
-TECH_RE = re.compile(r"\b(" + "|".join(re.escape(t) for t in TECHNOLOGIES) + r")\b", re.IGNORECASE)
+TECH_RE = re.compile(
+    r"\b(" + "|".join(re.escape(t) for t in TECHNOLOGIES) + r")\b", re.IGNORECASE
+)
 PATTERN_RE = re.compile(
     r"\b(" + "|".join(re.escape(p).replace(r"\-", "[- ]") for p in PATTERNS) + r")\b"
     r"|\b\w+\s+(?:pattern|architecture)\b",
@@ -126,8 +160,7 @@ def shape_warnings(text: str, has_why: bool) -> list[str]:
             "Describe the behaviour it is meant to produce instead."
         )
 
-    paths = PATH_RE.findall(text)
-    if paths:
+    if PATH_RE.findall(text):
         out.append("mentions a file or directory path. Rules should not prescribe layout.")
 
     imp = IMPERATIVE_RE.search(text) or MODAL_IMPERATIVE_RE.search(text)
@@ -146,7 +179,10 @@ def shape_warnings(text: str, has_why: bool) -> list[str]:
     return out
 
 
-def check_constraints(report: Report) -> list:
+# --- structural checks --------------------------------------------------------
+
+
+def check_constraints(report: Report, approved: set[str]) -> None:
     constraints = load_constraints()
     seen: dict[str, str] = {}
 
@@ -154,6 +190,7 @@ def check_constraints(report: Report) -> list:
         if not path.exists():
             report.error(path.name, "file is missing")
 
+    unbacked = 0
     for c in constraints:
         where = c.where()
         expected_source = "default" if "defaults.md" in str(c.source_file) else "project"
@@ -180,13 +217,32 @@ def check_constraints(report: Report) -> list:
                 f"{where} [{c.id}]",
                 f"status '{status}' is not one of {', '.join(VALID_STATUS)}",
             )
-        if status == "waived" and not c.get("waived"):
-            report.error(
-                f"{where} [{c.id}]",
-                "waived constraints need a 'waived:' field giving the reason",
+
+        if status == "waived":
+            backing = c.get("waived-by").upper()
+            if not backing:
+                report.error(
+                    f"{where} [{c.id}]",
+                    "waived with no 'waived-by:' proposal. A waiver takes effect only "
+                    "through a proposal Clara approved (C-WAIVER-SIGNOFF). This "
+                    "constraint is still in force.",
+                )
+                unbacked += 1
+            elif backing not in approved:
+                report.error(
+                    f"{where} [{c.id}]",
+                    f"waived by {backing}, which is not in the approved baseline. "
+                    "The waiver has no effect and the constraint is still in force "
+                    "(C-WAIVER-SIGNOFF).",
+                )
+                unbacked += 1
+            if not c.get("waived"):
+                report.warn(f"{where} [{c.id}]", "waived without a 'waived:' reason")
+
+        if status == "active" and c.get("waived-by"):
+            report.warn(
+                f"{where} [{c.id}]", "has a 'waived-by:' but status is active"
             )
-        if status == "active" and c.get("waived"):
-            report.warn(f"{where} [{c.id}]", "has a 'waived:' reason but status is active")
 
         rule = c.get("rule")
         if rule and len(rule) < 25:
@@ -197,10 +253,16 @@ def check_constraints(report: Report) -> list:
         for msg in shape_warnings(rule, has_why=bool(c.get("why"))):
             report.warn(f"{where} [{c.id}] rule", msg)
 
-    active = [c for c in constraints if c.get("status").lower() == "active"]
-    waived = [c for c in constraints if c.get("status").lower() == "waived"]
-    report.note(f"{len(active)} active constraints, {len(waived)} waived.")
-    return constraints
+    effective_waived = [
+        c
+        for c in constraints
+        if c.get("status").lower() == "waived" and c.get("waived-by").upper() in approved
+    ]
+    report.note(
+        f"{len(constraints) - len(effective_waived)} constraints in force, "
+        f"{len(effective_waived)} effectively waived."
+        + (f" {unbacked} waiver(s) claimed but not approved -- those still bind." if unbacked else "")
+    )
 
 
 def check_goal(report: Report) -> None:
@@ -222,7 +284,7 @@ def check_goal(report: Report) -> None:
         if state == "draft":
             report.note(
                 "Goal condition is still a draft. Intake is not finished until Clara "
-                "approves it (set state: approved)."
+                "approves it (set state: approved, then run tools/approve.py --baseline)."
             )
 
     if not statement or statement.lower().startswith("_not yet"):
@@ -276,6 +338,196 @@ def check_goal(report: Report) -> None:
             )
 
 
+def check_proposals(report: Report, approved: set[str]) -> None:
+    proposals = load_proposals()
+    seen: dict[str, str] = {}
+    pending = 0
+
+    for p in proposals:
+        where = p.where()
+        for key in PROPOSAL_REQUIRED:
+            if not p.get(key):
+                report.error(f"{where} [{p.id}]", f"missing required field '{key}:'")
+
+        if p.id in seen:
+            report.error(f"{where} [{p.id}]", f"duplicate id, already used at {seen[p.id]}")
+        seen[p.id] = where
+
+        status = p.get("status").lower()
+        if status and status not in VALID_PROPOSAL_STATUS:
+            report.error(
+                f"{where} [{p.id}]",
+                f"status '{status}' is not one of {', '.join(VALID_PROPOSAL_STATUS)}",
+            )
+        kind = p.get("kind").lower()
+        if kind and kind not in VALID_PROPOSAL_KIND:
+            report.warn(
+                f"{where} [{p.id}]",
+                f"kind '{kind}' is not one of {', '.join(VALID_PROPOSAL_KIND)}",
+            )
+
+        if status == "approved" and p.id.upper() not in approved:
+            report.error(
+                f"{where} [{p.id}]",
+                "claims status 'approved' but is not in the approved baseline. A "
+                "proposal cannot approve itself -- approval is recorded by "
+                "tools/approve.py in an approval commit. Treating this as NOT approved.",
+            )
+        if status == "proposed":
+            pending += 1
+            if len(p.get("because")) < 40:
+                report.warn(
+                    f"{where} [{p.id}]",
+                    "'because:' is very thin. A proposal to change a standing "
+                    "constraint needs a real explanation.",
+                )
+
+    if pending:
+        report.note(f"{pending} proposal(s) awaiting Clara's sign-off. See tools/approve.py --status.")
+
+
+# --- governance ---------------------------------------------------------------
+
+
+def check_governance(report: Report) -> None:
+    baseline = load_baseline()
+
+    if not baseline.exists:
+        report.note(
+            "Governance not engaged: no approved baseline. Constraints and the goal "
+            "condition are still freely editable, which is correct during intake. "
+            "Run 'python3 tools/approve.py --baseline' once the goal condition is approved."
+        )
+        return
+
+    mode = "signed" if signing_configured() else "attribution-only"
+    report.note(f"Governance engaged, baseline recorded {baseline.updated} ({mode}).")
+    if mode == "attribution-only":
+        report.note(
+            "Approval is identified by commit author, which anything with repo access "
+            "can set. This is an audit trail, not a lock -- see docs/governance.md to "
+            "turn on signature verification."
+        )
+
+    # 1. Has governed content moved away from what was approved?
+    for area, (want, got) in sorted(drift().items()):
+        report.error(
+            f"governance/{area}",
+            f"content no longer matches the approved baseline "
+            f"(approved {want[:12]}, current {got[:12]}). Either this was changed "
+            "without approval -- revert it -- or Clara approved a change and it has "
+            "not been recorded with tools/approve.py.",
+        )
+
+    if not in_git_repo():
+        report.warn(
+            "governance",
+            "not a git repository, so approvals cannot be checked against history. "
+            "The baseline file is taken at face value.",
+        )
+        return
+
+    # Was signature verification switched off after having been switched on?
+    code, out = git("log", "--diff-filter=A", "--format=%H", "--", "governance/allowed_signers")
+    if code == 0 and out.strip() and not signing_configured():
+        report.error(
+            "governance/allowed_signers",
+            "this repository used signature-verified approvals and the allowed_signers "
+            "file is now gone. Governance has been downgraded to attribution-only. "
+            "Restore it, or record deliberately that you turned it off.",
+        )
+
+    commits = approval_commits()
+    by_id: dict[str, list] = {}
+    for commit in commits:
+        for pid in commit.ids:
+            by_id.setdefault(pid, []).append(commit)
+
+    allowed = approvers()
+    if not allowed:
+        report.warn(
+            "governance/approvers.txt",
+            "no approvers listed, so any author counts. Add Clara's commit email.",
+        )
+
+    # 2. Does every recorded approval have a real commit behind it?
+    for pid in baseline.approved:
+        matches = by_id.get(pid, [])
+        if not matches:
+            report.error(
+                "governance/baseline.txt",
+                f"{pid} is recorded as approved but no commit says 'APPROVED: {pid}'. "
+                "The baseline was edited by hand.",
+            )
+            continue
+        for commit in matches:
+            if allowed and commit.author_email not in allowed:
+                report.error(
+                    f"governance ({commit.sha})",
+                    f"approval of {pid} was committed by {commit.author_email}, who is "
+                    "not listed in governance/approvers.txt.",
+                )
+            if signing_configured():
+                if commit.signature == "N":
+                    # Was signing already in force when this commit was made?
+                    code, _ = git(
+                        "cat-file", "-e", f"{commit.sha}:governance/allowed_signers"
+                    )
+                    if code == 0:
+                        report.error(
+                            f"governance ({commit.sha})",
+                            f"approval of {pid} is unsigned, but signature "
+                            "verification was already in force at that commit. An "
+                            "approval made outside tools/approve.py, or by something "
+                            "without the signing key.",
+                        )
+                    else:
+                        report.warn(
+                            f"governance ({commit.sha})",
+                            f"approval of {pid} predates signature verification being "
+                            "turned on. Re-approve it if you want it verifiable.",
+                        )
+                else:
+                    ok, detail = verify_signature(commit.sha)
+                    if not ok:
+                        report.error(
+                            f"governance ({commit.sha})",
+                            f"approval of {pid} has a signature that does not verify "
+                            f"against governance/allowed_signers ({detail or 'unverified'}).",
+                        )
+
+    # 3. Did the baseline file itself only ever change in approval commits?
+    approval_shas = {c.sha for c in commits}
+    code, out = git("log", "--format=%H", "--", "governance/baseline.txt")
+    if code == 0:
+        for sha in [line.strip()[:12] for line in out.splitlines() if line.strip()]:
+            if sha not in approval_shas:
+                report.error(
+                    f"governance ({sha})",
+                    "governance/baseline.txt was changed in a commit that carries no "
+                    "'APPROVED:' token. The record of what Clara approved was edited "
+                    "outside the approval path.",
+                )
+
+    # 4. Uncommitted changes to governed files hide from history entirely.
+    code, out = git("status", "--porcelain", "--", *GOVERNED_PATHS)
+    if code == 0 and out.strip():
+        dirty = ", ".join(
+            sorted(
+                {
+                    line.split(maxsplit=1)[1]
+                    for line in out.splitlines()
+                    if len(line.split(maxsplit=1)) > 1
+                }
+            )
+        )
+        report.warn(
+            "governance",
+            f"uncommitted changes to governed files ({dirty}). Commit or revert them so "
+            "the history reflects the real state.",
+        )
+
+
 def check_placeholders(report: Report) -> None:
     remaining = []
     for path in (ROOT / "constraints" / "project.md", OUTCOMES_FILE, GOAL_FILE):
@@ -296,8 +548,11 @@ def main(argv: list[str]) -> int:
     quiet = "--quiet" in argv
 
     report = Report()
-    check_constraints(report)
+    approved = approved_ids()
+    check_constraints(report, approved)
     check_goal(report)
+    check_proposals(report, approved)
+    check_governance(report)
     check_placeholders(report)
 
     if report.errors:
@@ -316,7 +571,7 @@ def main(argv: list[str]) -> int:
             print(f"  - {line}")
 
     if not report.errors and not report.warnings:
-        print("\nOK -- constraints and goal condition are well-formed.")
+        print("\nOK -- constraints and goal condition are well-formed and unmodified.")
     print()
 
     if report.errors:

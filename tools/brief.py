@@ -1,15 +1,20 @@
 #!/usr/bin/env python3
-"""Print the constraints, the goal condition, and recent progress.
+"""Print the constraints, the goal condition, pending proposals, and recent progress.
 
-    python3 tools/brief.py          # everything
-    python3 tools/brief.py --goal   # just the goal condition and criteria
-    python3 tools/brief.py --rules  # just the active constraints
+    python3 tools/brief.py             # everything
+    python3 tools/brief.py --goal      # just the goal condition and criteria
+    python3 tools/brief.py --rules     # just the constraints
+    python3 tools/brief.py --pending   # just governance: proposals and drift
 
 Run this at the start of a session, and again periodically during a long run: after
 finishing a chunk of work, before a decision that would be expensive to reverse, or
 whenever you notice you have been going a while without checking. It is the re-grounding
 call -- read the output, then ask whether what you are about to do stays inside the rules
 and moves toward the finish line.
+
+A waiver that Clara has not approved is shown as NOT in effect, and the constraint it
+targets is listed among the rules that bind. That is not a courtesy; it is how the
+loader computes the list.
 """
 
 from __future__ import annotations
@@ -21,9 +26,15 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from constraint_files import (  # noqa: E402
+    approved_ids,
+    drift,
+    governance_engaged,
+    load_baseline,
     load_constraints,
     load_goal,
+    load_proposals,
     recent_log_entries,
+    signing_configured,
 )
 
 WIDTH = 88
@@ -34,40 +45,62 @@ def rule(char: str = "=") -> None:
 
 
 def wrap(text: str, indent: str = "    ") -> str:
-    return textwrap.fill(
-        text, width=WIDTH, initial_indent=indent, subsequent_indent=indent
-    )
+    return textwrap.fill(text, width=WIDTH, initial_indent=indent, subsequent_indent=indent)
+
+
+def _partition(approved: set[str]):
+    """Split constraints into those that bind and those genuinely waived."""
+    binding, waived, claimed = [], [], []
+    for c in load_constraints():
+        if c.get("status").lower() != "waived":
+            binding.append(c)
+        elif c.get("waived-by").upper() in approved:
+            waived.append(c)
+        else:
+            binding.append(c)
+            claimed.append(c)
+    return binding, waived, claimed
 
 
 def show_constraints() -> None:
-    constraints = load_constraints()
-    active = [c for c in constraints if c.get("status").lower() != "waived"]
-    waived = [c for c in constraints if c.get("status").lower() == "waived"]
+    approved = approved_ids()
+    binding, waived, claimed = _partition(approved)
 
     rule()
-    print(f"CONSTRAINTS -- {len(active)} active")
+    print(f"CONSTRAINTS -- {len(binding)} in force")
     rule()
     print(
         wrap(
             "These bound the work. They say what must remain true; they never say how "
-            "to build anything. Implementation is your judgment.",
+            "to build anything. Implementation is your judgment. You may not change "
+            "them yourself -- propose, and Clara approves.",
             indent="",
         )
     )
     print()
 
-    for c in active:
+    for c in binding:
         origin = "default" if c.get("source").lower() == "default" else "project"
-        print(f"  [{c.id}] {c.title}  ({origin})")
+        flag = "  [WAIVER PENDING -- STILL BINDING]" if c in claimed else ""
+        print(f"  [{c.id}] {c.title}  ({origin}){flag}")
         print(wrap(c.get("rule"), indent="      "))
         if c.get("check"):
             print(wrap(f"check: {c.get('check')}", indent="      "))
         print()
 
+    if claimed:
+        print(wrap(
+            f"! {len(claimed)} constraint(s) carry a waiver Clara has not approved. "
+            "An unapproved waiver has no effect. Do not act as though it does.",
+            indent="  ",
+        ))
+        print()
+
     if waived:
-        print(f"  Waived for this project ({len(waived)}):")
+        print(f"  Waived with approval ({len(waived)}):")
         for c in waived:
-            print(f"    [{c.id}] {c.title} -- {c.get('waived') or 'no reason given'}")
+            print(f"    [{c.id}] {c.title} -- {c.get('waived') or 'no reason recorded'}"
+                  f" (via {c.get('waived-by')})")
         print()
 
 
@@ -102,7 +135,10 @@ def show_goal() -> None:
         print(wrap(g.get("criterion"), indent="      "))
         print(wrap(f"check: {g.get('check')}", indent="      "))
         if gstate == "met":
-            print(wrap(f"evidence: {g.get('evidence') or '(NONE -- this is a problem)'}", indent="      "))
+            print(wrap(
+                f"evidence: {g.get('evidence') or '(NONE -- this is a problem)'}",
+                indent="      ",
+            ))
         print()
 
     if criteria:
@@ -113,6 +149,66 @@ def show_goal() -> None:
                 "looking for more to improve.",
                 indent="  ",
             ))
+        print()
+
+
+def show_governance() -> None:
+    baseline = load_baseline()
+    proposals = load_proposals()
+    pending = [p for p in proposals if p.get("status").lower() == "proposed"]
+    changed = drift()
+
+    rule()
+    print("GOVERNANCE -- " + (
+        f"engaged {baseline.updated}" if baseline.exists else "not engaged (intake phase)"
+    ))
+    rule()
+
+    if not baseline.exists:
+        print(wrap(
+            "No approved baseline yet, so constraints and the goal condition are still "
+            "being written. Once Clara approves the goal condition she runs "
+            "'python3 tools/approve.py --baseline' and they stop being yours to edit.",
+            indent="  ",
+        ))
+        print()
+    else:
+        if not signing_configured():
+            print(wrap(
+                "Mode: attribution-only. Approvals are identified by commit author. "
+                "Real, but forgeable -- see docs/governance.md.",
+                indent="  ",
+            ))
+        else:
+            print(wrap("Mode: signed. Approval commits are signature-verified.", indent="  "))
+        print()
+
+    if changed:
+        print(wrap(
+            "! GOVERNED CONTENT DIFFERS FROM WHAT CLARA APPROVED: "
+            + ", ".join(sorted(changed))
+            + ". If you changed it, revert it and raise a proposal instead. Run "
+              "'python3 tools/validate.py' for detail.",
+            indent="  ",
+        ))
+        print()
+
+    if pending:
+        print(f"  {len(pending)} proposal(s) awaiting Clara's sign-off -- inert until she approves:")
+        print()
+        for p in pending:
+            print(f"    [{p.id}] {p.title}  ({p.get('kind') or 'unspecified'})")
+            print(wrap(f"targets: {p.get('targets') or '-'}", indent="        "))
+            print(wrap(f"because: {p.get('because') or '(no explanation -- fix this)'}",
+                       indent="        "))
+            print()
+        print(wrap(
+            "Mention these to Clara. Do not act as though any of them were approved.",
+            indent="  ",
+        ))
+        print()
+    elif baseline.exists:
+        print("  No pending proposals.")
         print()
 
 
@@ -132,22 +228,25 @@ def show_progress(limit: int = 3) -> None:
 
 
 def main(argv: list[str]) -> int:
-    only_goal = "--goal" in argv
-    only_rules = "--rules" in argv
-
-    if only_goal:
+    if "--goal" in argv:
         show_goal()
         return 0
-    if only_rules:
+    if "--rules" in argv:
         show_constraints()
+        return 0
+    if "--pending" in argv:
+        show_governance()
         return 0
 
     show_constraints()
     show_goal()
+    show_governance()
     show_progress()
     rule("-")
-    print("Full detail: constraints/, goals/, progress/log.md. "
-          "Well-formedness: python3 tools/validate.py")
+    print("Full detail: constraints/, goals/, proposals/, progress/log.md.")
+    print("Well-formedness and tamper check: python3 tools/validate.py")
+    if governance_engaged():
+        print("To change a constraint or the goal: write a proposal. Clara approves it.")
     return 0
 
 

@@ -15,7 +15,13 @@ Then update `goals/goal-condition.md`:
 - Criterion failed → leave it `unmet` and say what specifically fell short.
 - Check could not be run → say why. Do not mark it met.
 
-Run `python3 tools/validate.py` afterwards.
+Update `state:` and `evidence:` only. The criterion text and its check are governed —
+if a criterion turns out to be unmeetable or wrongly worded, that is a proposal
+(`commands/propose.md`), not an edit. Rewording a criterion so the work passes is the
+exact failure this system exists to prevent.
+
+Run `python3 tools/validate.py` afterwards. It will flag any drift in the governed part
+of the goal condition.
 
 Report: how many criteria are met, what is left, and what the next step is.
 

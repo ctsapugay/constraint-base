@@ -42,10 +42,13 @@ for: data that must not be touched, things that must not become slow, environmen
 to run in, anything with a deadline or an external dependency.
 → `constraints/project.md`
 
-**6. The defaults.** Show her the seven defaults in `constraints/defaults.md` in one
+**6. The defaults.** Show her the nine defaults in `constraints/defaults.md` in one
 short list. Ask if any should be waived for this project. Most of the time none should
-be — do not talk her into waiving any. If she waives one, set `status: waived` and record
-her reason in `waived:`.
+be — do not talk her into waiving any.
+
+If she wants one waived, this is the one moment it is simple: governance has not engaged
+yet, so set `status: waived` with her reason and note it in the log. After the baseline
+exists, a waiver needs an approved proposal, and a waiver without one has no effect.
 
 **7. Open questions.** Anything she has not decided. For each, propose an assumption the
 agent will work under, and check she is fine with it.
@@ -69,8 +72,12 @@ When she approves, set `state: approved` in `goals/goal-condition.md` and record
    silence it.
 3. Append an entry to `progress/log.md` recording that intake happened, what was agreed,
    and any assumptions.
-4. Tell Clara what to run next, and that she can edit any of these files by hand at any
-   time.
+4. Ask her to run `python3 tools/approve.py --baseline`. This is the handover: it records
+   what she approved and takes the constraints and the finish line out of your hands. Say
+   so plainly rather than presenting it as a formality — from that point you propose
+   changes, you do not make them.
+5. Tell her she can still edit anything by hand whenever she likes; she just re-records
+   with `approve.py` afterwards so the baseline matches.
 
 ## What good output looks like
 

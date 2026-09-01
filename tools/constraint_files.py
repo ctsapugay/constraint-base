@@ -1,4 +1,4 @@
-"""Parser for the constraint-base file format.
+"""Parser and governance helpers for the constraint-base file format.
 
 The format is Markdown with a convention:
 
@@ -11,12 +11,18 @@ Every ``## `` heading starts a section. If the heading looks like ``ID — title
 uppercase-ish id, a dash, a title) the section gets an id. Bullets of the form
 ``- **key:** value`` become fields. Everything else is prose and is ignored.
 
+Beyond parsing, this module carries the governance layer: which proposals exist, which
+have been approved, and whether the governed content still matches the approved baseline.
+See docs/governance.md -- in particular the section on what is actually enforced.
+
 Standard library only, by design. No install step.
 """
 
 from __future__ import annotations
 
+import hashlib
 import re
+import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -30,11 +36,20 @@ GOAL_FILE = ROOT / "goals" / "goal-condition.md"
 OUTCOMES_FILE = ROOT / "goals" / "outcomes.md"
 LOG_FILE = ROOT / "progress" / "log.md"
 
+PROPOSALS_DIR = ROOT / "proposals"
+GOVERNANCE_DIR = ROOT / "governance"
+BASELINE_FILE = GOVERNANCE_DIR / "baseline.txt"
+APPROVERS_FILE = GOVERNANCE_DIR / "approvers.txt"
+ALLOWED_SIGNERS_FILE = GOVERNANCE_DIR / "allowed_signers"
+
+# Tool sources are governed too: a validator the agent can quietly edit is not a check.
+GOVERNED_TOOLS = ("constraint_files.py", "validate.py", "approve.py", "brief.py")
+
+APPROVAL_TOKEN_RE = re.compile(r"\bAPPROVED:\s*([Pp]-\d{3,5}(?:\s*,\s*[Pp]-\d{3,5})*|BASELINE)\b")
+
 # "## C-LOCAL — Development stays local"  /  "## G1 - Something"
 HEADING_RE = re.compile(r"^##\s+(?P<rest>.+?)\s*$")
-ID_TITLE_RE = re.compile(
-    r"^(?P<id>[A-Z][A-Za-z0-9-]{0,39})\s+[—–-]\s+(?P<title>.+)$"
-)
+ID_TITLE_RE = re.compile(r"^(?P<id>[A-Z][A-Za-z0-9-]{0,39})\s+[—–-]\s+(?P<title>.+)$")
 FIELD_RE = re.compile(r"^-\s+\*\*(?P<key>[a-zA-Z][a-zA-Z0-9 _-]*):\*\*\s*(?P<value>.*)$")
 CONTINUATION_RE = re.compile(r"^\s{2,}(?P<value>\S.*)$")
 FENCE_RE = re.compile(r"^\s*```")
@@ -46,6 +61,9 @@ PLACEHOLDER_MARKERS = (
     "_..._",
     "_No project constraints defined yet",
 )
+
+
+# ---------------------------------------------------------------- parsing ----
 
 
 @dataclass
@@ -132,12 +150,11 @@ def parse_file(path: Path) -> list[Section]:
         if not raw.strip():
             last_key = None
 
-
     return sections
 
 
 def load_constraints() -> list[Section]:
-    """Constraints from both files, in file order. Only id-bearing sections count."""
+    """Constraints from both files, in file order."""
     out: list[Section] = []
     for path in CONSTRAINT_FILES:
         for section in parse_file(path):
@@ -149,23 +166,39 @@ def load_constraints() -> list[Section]:
 def load_goal() -> tuple[Section | None, list[Section], str]:
     """Return (status section, criteria, statement text)."""
     sections = parse_file(GOAL_FILE)
-    status = next((s for s in sections if s.id is None and s.title.lower() == "status"), None)
+    status = next(
+        (s for s in sections if s.id is None and s.title.lower() == "status"), None
+    )
     criteria = [s for s in sections if s.id and s.id.upper().startswith("G")]
-    return status, criteria, _statement_text()
+    return status, criteria, section_text(GOAL_FILE, "statement")
 
 
-def _statement_text() -> str:
-    if not GOAL_FILE.exists():
+def load_proposals() -> list[Section]:
+    """Every proposal in proposals/, sorted by id. TEMPLATE.md is ignored."""
+    if not PROPOSALS_DIR.exists():
+        return []
+    out: list[Section] = []
+    for path in sorted(PROPOSALS_DIR.glob("*.md")):
+        if path.name.upper().startswith("TEMPLATE"):
+            continue
+        for section in parse_file(path):
+            if section.id and section.id.upper().startswith("P-"):
+                out.append(section)
+    return sorted(out, key=lambda s: s.id or "")
+
+
+def section_text(path: Path, heading_prefix: str) -> str:
+    """Prose under a ``## <heading_prefix>...`` heading, comments stripped."""
+    if not path.exists():
         return ""
-    lines = GOAL_FILE.read_text(encoding="utf-8").splitlines()
     collecting = False
     out: list[str] = []
-    for raw in lines:
-        if raw.strip().lower().startswith("## statement"):
-            collecting = True
+    for raw in path.read_text(encoding="utf-8").splitlines():
+        if raw.startswith("## "):
+            if collecting:
+                break
+            collecting = raw[3:].strip().lower().startswith(heading_prefix.lower())
             continue
-        if collecting and raw.startswith("## "):
-            break
         if collecting:
             stripped = raw.strip()
             if stripped and not stripped.startswith("<!--"):
@@ -205,3 +238,250 @@ def recent_log_entries(limit: int = 3) -> list[str]:
     if current:
         chunks.append("\n".join(current).strip())
     return [c for c in chunks if c][-limit:]
+
+
+# ------------------------------------------------------------- governance ----
+
+
+@dataclass
+class Baseline:
+    """The approved state, as recorded by tools/approve.py."""
+
+    exists: bool = False
+    updated: str = ""
+    digests: dict[str, str] = field(default_factory=dict)
+    approved: list[str] = field(default_factory=list)
+
+
+def load_baseline() -> Baseline:
+    if not BASELINE_FILE.exists():
+        return Baseline(exists=False)
+    baseline = Baseline(exists=True)
+    for raw in BASELINE_FILE.read_text(encoding="utf-8").splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        parts = line.split(None, 1)
+        if len(parts) != 2:
+            continue
+        key, value = parts[0].lower(), parts[1].strip()
+        if key == "updated":
+            baseline.updated = value
+        elif key == "approved":
+            baseline.approved.append(value.upper())
+        elif key in ("constraints", "goal", "tools"):
+            baseline.digests[key] = value
+    return baseline
+
+
+def approved_ids() -> set[str]:
+    """Proposal ids the recorded baseline says are approved.
+
+    This is the only thing that makes a waiver take effect. A proposal file that
+    claims ``status: approved`` but is absent here counts as NOT approved -- which
+    is what makes an unapproved waiver inert without relying on anyone's good
+    behaviour. Whether the baseline itself is honest is a separate question that
+    validate.py answers against git history.
+    """
+    return set(load_baseline().approved)
+
+
+def _norm(text: str) -> str:
+    return " ".join(text.split())
+
+
+def canonical_constraints() -> str:
+    """Governed constraint content, in a stable form.
+
+    Includes every field that changes what a rule means or whether it binds.
+    """
+    lines = []
+    for c in load_constraints():
+        lines.append(
+            "|".join(
+                _norm(x)
+                for x in (
+                    c.id or "",
+                    c.title,
+                    c.get("source"),
+                    c.get("status"),
+                    c.get("waived-by"),
+                    c.get("rule"),
+                    c.get("check"),
+                    c.get("why"),
+                )
+            )
+        )
+    return "\n".join(lines)
+
+
+def canonical_goal() -> str:
+    """Governed goal content.
+
+    Deliberately excludes each criterion's ``state:`` and ``evidence:``, and the
+    goal's own ``state:``. Those change constantly during normal work; the finish
+    line itself is what is governed.
+    """
+    _status, criteria, statement = load_goal()
+    lines = [_norm(statement)]
+    for g in criteria:
+        lines.append(
+            "|".join(
+                _norm(x)
+                for x in (g.id or "", g.title, g.get("criterion"), g.get("check"))
+            )
+        )
+    lines.append(_norm(section_text(GOAL_FILE, "out of scope")))
+    return "\n".join(lines)
+
+
+def canonical_tools() -> str:
+    """Source of the tools that do the checking."""
+    parts = []
+    for name in GOVERNED_TOOLS:
+        path = ROOT / "tools" / name
+        parts.append(f"### {name}\n" + (path.read_text(encoding="utf-8") if path.exists() else ""))
+    return "\n".join(parts)
+
+
+def digest(text: str) -> str:
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def current_digests() -> dict[str, str]:
+    return {
+        "constraints": digest(canonical_constraints()),
+        "goal": digest(canonical_goal()),
+        "tools": digest(canonical_tools()),
+    }
+
+
+def drift() -> dict[str, tuple[str, str]]:
+    """Governed areas whose current digest differs from the baseline.
+
+    Returns {area: (baseline_digest, current_digest)}. Empty when clean.
+    """
+    baseline = load_baseline()
+    if not baseline.exists:
+        return {}
+    current = current_digests()
+    out = {}
+    for area, want in baseline.digests.items():
+        got = current.get(area, "")
+        if want != got:
+            out[area] = (want, got)
+    return out
+
+
+def governance_engaged() -> bool:
+    """Governance binds once Clara has approved a baseline.
+
+    During intake everything is still being written, so there is nothing to protect
+    yet. The moment she approves the goal condition and runs ``approve.py --baseline``,
+    the standing constraints and the finish line stop being the agent's to edit.
+    """
+    return load_baseline().exists
+
+
+# ------------------------------------------------------------------- git -----
+
+
+def git(*args: str) -> tuple[int, str]:
+    """Run a git command in the repo. Returns (returncode, combined output)."""
+    try:
+        proc = subprocess.run(
+            ["git", *args],
+            cwd=str(ROOT),
+            capture_output=True,
+            text=True,
+            timeout=20,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        return 1, str(exc)
+    return proc.returncode, (proc.stdout + proc.stderr).strip()
+
+
+def in_git_repo() -> bool:
+    code, out = git("rev-parse", "--is-inside-work-tree")
+    return code == 0 and out.strip() == "true"
+
+
+def approvers() -> list[str]:
+    """Email addresses whose commits count as approvals."""
+    if not APPROVERS_FILE.exists():
+        return []
+    out = []
+    for raw in APPROVERS_FILE.read_text(encoding="utf-8").splitlines():
+        line = raw.strip()
+        if line and not line.startswith("#"):
+            out.append(line.lower())
+    return out
+
+
+def signing_configured() -> bool:
+    """True when signature verification is available -- the stronger mode."""
+    return ALLOWED_SIGNERS_FILE.exists()
+
+
+@dataclass
+class ApprovalCommit:
+    sha: str
+    author_email: str
+    signature: str  # git's %G? code: G good, U good/untrusted, B bad, N none, E error
+    subject: str
+    ids: list[str]
+
+    @property
+    def signed_ok(self) -> bool:
+        return self.signature in ("G", "U")
+
+
+def approval_commits() -> list[ApprovalCommit]:
+    """Commits whose message carries an ``APPROVED:`` token."""
+    if not in_git_repo():
+        return []
+    sep = "\x1f"
+    # Record separator goes FIRST: an empty %b would otherwise leave a ragged tail.
+    code, out = git(
+        "log", "--no-merges", f"--format=%x1e%H{sep}%ae{sep}%G?{sep}%s{sep}%b"
+    )
+    if code != 0:
+        return []
+    commits: list[ApprovalCommit] = []
+    for record in out.split("\x1e"):
+        record = record.strip("\n")
+        if not record.strip():
+            continue
+        parts = record.split(sep)
+        if len(parts) < 4:
+            continue
+        sha, email, sig, subject = parts[0], parts[1], parts[2], parts[3]
+        body = "\n".join(parts[4:])
+        ids: list[str] = []
+        for match in APPROVAL_TOKEN_RE.finditer(f"{subject}\n{body}"):
+            ids.extend(part.strip().upper() for part in match.group(1).split(","))
+        if ids:
+            commits.append(
+                ApprovalCommit(
+                    sha=sha[:12],
+                    author_email=email.lower(),
+                    signature=sig or "N",
+                    subject=subject,
+                    ids=ids,
+                )
+            )
+    return commits
+
+
+def verify_signature(sha: str) -> tuple[bool, str]:
+    """Verify a commit signature against governance/allowed_signers."""
+    if not ALLOWED_SIGNERS_FILE.exists():
+        return False, "no allowed_signers file"
+    code, out = git(
+        "-c",
+        f"gpg.ssh.allowedSignersFile={ALLOWED_SIGNERS_FILE}",
+        "verify-commit",
+        "--raw",
+        sha,
+    )
+    return code == 0, out.splitlines()[0] if out else ""

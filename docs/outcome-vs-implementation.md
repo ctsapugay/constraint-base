@@ -104,3 +104,33 @@ constraint still catches the failure Clara actually cared about.
 
 Do this for every constraint that fails a test. The question is always: **what bad
 outcome was this "how" trying to prevent?** Write that instead.
+
+## One apparent exception: the governance rules
+
+`C-GOVERNED-CHANGE` and `C-WAIVER-SIGNOFF` look like process instructions — "write a
+proposal", "get sign-off". They are not exceptions to the rule on this page, and it is
+worth seeing why, because the distinction is the same one you apply everywhere else.
+
+They constrain the *agent's* conduct, not the project's implementation. What must remain
+true is: the rules the work is judged against are the ones Clara agreed to. That is an
+outcome, and it is checkable from outside — `validate.py` compares the current rules to
+the approved baseline, and git history shows who changed what. The proposal mechanism is
+the check, in the same way "run the importer on samples/" is a check. It is not
+architecture for the thing being built.
+
+The test that separates them: **does this constrain what the agent produces, or how it
+produces it?** Governance rules constrain neither — they constrain what counts as the
+standard. A rule about the constraint system itself is legitimate. A rule about the
+project's code structure is not.
+
+Note also that `C-GOVERNED-CHANGE` carries a `why:`. It should: it is the one default
+whose reasoning an agent is most likely to try to argue past, and the reasoning is the
+part that makes it stick.
+
+## And the thing this page is really for
+
+You will, at some point, be stuck against a constraint. The rewrite advice above is for
+authoring good constraints, not for escaping ones you find inconvenient. If a rule is
+blocking you and governance has engaged, the honest move is a proposal that states the
+blockage and what it would cost to lift the rule — not a "clarification" that quietly
+converts a binding rule into a softer one. `docs/governance.md` covers that path.

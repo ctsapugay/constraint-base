@@ -15,7 +15,15 @@ Then answer these, out loud, in one short paragraph each:
    check? Is what I am working on now traceable to a criterion, or did it come from
    somewhere else? Work that is not traceable to a criterion is drift — say so.
 
-3. **What is my next concrete step, and why that one?**
+3. **Has any governed content moved?** The brief reports drift from the approved
+   baseline. If it shows any, stop: either I changed a constraint or the goal condition,
+   which I may not do, or Clara changed something and it needs recording. Say which, and
+   do not continue past it.
+
+4. **Are there pending proposals?** If so, name them for Clara — they are inert until she
+   approves, and a proposal nobody remembers is a proposal that quietly becomes an excuse.
+
+5. **What is my next concrete step, and why that one?**
 
 If anything is off, say so plainly and propose a correction rather than continuing.
 

@@ -20,6 +20,21 @@ and read `docs/outcome-vs-implementation.md`.
 This cuts both ways: do not let a constraint tell you how to build, and do not write one
 that does.
 
+## The second rule
+
+**The constraints and the goal condition are not yours to change.**
+
+Once Clara has approved a baseline, you may not add, alter, weaken, or remove a standing
+constraint, a waiver, or the goal condition. If you believe one is wrong, mis-scoped, or
+genuinely blocking, write a proposal in `proposals/` explaining why, tell Clara it is
+waiting, and carry on inside the existing rule — or stop and say you are blocked.
+
+A proposal changes nothing by existing. A waiver you have not had approved binds you
+exactly as if you had never written it. This is not a formality you can reason your way
+past: the reason it exists is that an agent which can edit its own constraints can
+weaken them until a faulty project passes, and you will not be able to tell from the
+inside whether that is what you are doing. Read `docs/governance.md`.
+
 ## Orient yourself first
 
 Run this before anything else. It prints the active constraints, the goal condition, and
@@ -42,6 +57,9 @@ building. Do not skip to the goal condition — the outcomes have to come first 
 condition will be guesswork.
 
 Intake ends when the goal condition is approved and `python3 tools/validate.py` passes.
+Then ask Clara to run `python3 tools/approve.py --baseline`. That is the moment the
+constraints and the finish line stop being editable by you. You cannot run it for her in
+any meaningful sense — the approval is hers, and it is recorded as her commit.
 
 ### Situation 2 — goal condition is approved, work is in progress
 
@@ -63,6 +81,11 @@ While working:
 - **When you hit outcome-changing ambiguity, ask Clara** (constraint C-SURFACE-AMBIGUITY).
   Decisions that only affect how the work gets done are yours to make — make them and
   note them in the log.
+- **When a constraint or criterion seems wrong, propose — never edit.** Copy
+  `proposals/TEMPLATE.md`, fill in what it targets, what would change, why, and what
+  stops being protected. Then keep working inside the current rule. `brief.py` will keep
+  surfacing the proposal until Clara acts on it; mention it to her rather than waiting
+  silently.
 
 Stop when every criterion is `met` with real evidence. Then say so and stop — do not keep
 improving past the finish line. `goals/goal-condition.md` has an "out of scope for done"
@@ -70,9 +93,20 @@ section; respect it.
 
 ### Situation 3 — Clara wants to change the constraints or the goal
 
-Edit the files, then run `python3 tools/validate.py`, then log the change in
-`progress/log.md` with her reason. A goal condition that moves without a record is worse
-than no goal condition. If the criteria changed materially, ask her to re-approve.
+She is the one who can. Make the edit she describes, run `python3 tools/validate.py`
+(it will report drift, which is expected here), and then tell her to record it:
+
+- a change she initiated → `python3 tools/approve.py --baseline`
+- a change from a proposal → `python3 tools/approve.py P-000N`
+
+Then log it in `progress/log.md` with her reason. A goal condition that moves without a
+record is worse than no goal condition.
+
+If governance has not engaged yet — no baseline — just edit and validate.
+
+### Situation 4 — you think a constraint is wrong
+
+Write a proposal. Do not edit. See the second rule above and `docs/governance.md`.
 
 ## The files
 
@@ -83,19 +117,23 @@ than no goal condition. If the criteria changed materially, ask her to re-approv
 | `goals/outcomes.md` | The problem, who it is for, what becomes true, what is out of scope. |
 | `goals/goal-condition.md` | The finish line: criteria, checks, evidence, approval state. |
 | `progress/log.md` | Append-only session record so a fresh session can resume. |
+| `proposals/` | Your requests to change a rule. Inert until Clara approves. |
+| `governance/baseline.txt` | What Clara approved, as a digest. Written only by `approve.py`. |
 | `docs/outcome-vs-implementation.md` | How to tell an outcome from a smuggled implementation detail. |
+| `docs/governance.md` | Who may change the rules, and what is actually enforced. |
 | `docs/intake.md` | How to run intake. |
 | `docs/goal-conditions.md` | How to write a goal condition that can actually be checked. |
-| `tools/brief.py` | Prints constraints + goal + recent progress. Your re-grounding call. |
-| `tools/validate.py` | Checks the above are well-formed and outcome-shaped. |
+| `tools/brief.py` | Constraints + goal + pending proposals + progress. Your re-grounding call. |
+| `tools/validate.py` | Checks the above are well-formed, outcome-shaped, and unmodified. |
+| `tools/approve.py` | Clara's. Approving, declining, re-baselining. Not yours to run. |
 
 Everything is plain Markdown. Clara edits it by hand whenever she likes. Nothing here
 generates anything; there is no state outside these files.
 
 ## Defaults you inherit
 
-Seven rules, active unless waived in `constraints/defaults.md`. Read them there — the
-short version:
+Nine rules, in force unless Clara has approved a waiver. Read them in
+`constraints/defaults.md` — the short version:
 
 - **C-LOCAL** — development stays local: no deploying, publishing, provisioning hosted
   infrastructure, or pushing to production unless Clara says so explicitly this session
@@ -104,15 +142,20 @@ short version:
 - **C-SECRETS** — no credentials in tracked files
 - **C-EVIDENCE** — no completion claim without a check you actually ran
 - **C-RESUMABLE** — a fresh session can resume from the repo alone
+- **C-GOVERNED-CHANGE** — the constraints and goal condition change only with her sign-off
+- **C-WAIVER-SIGNOFF** — a waiver binds nothing until she approves it
 - **C-SURFACE-AMBIGUITY** — outcome-changing ambiguity goes to Clara
 
 C-LOCAL is the one most likely to come up mid-run. "It would be useful to deploy this to
 test it" is not an exception to it. Ask.
 
+C-GOVERNED-CHANGE is the one most likely to come up when you are stuck, which is exactly
+when it matters most.
+
 ## Optional shortcuts
 
-`commands/` holds three slash commands — `intake`, `reground`, `goal-check` — that wrap
-the three things above. They are live only if they have been copied into `.claude/commands/`:
+`commands/` holds four slash commands — `intake`, `reground`, `goal-check`, `propose` —
+that wrap the things above. They are live only if copied into `.claude/commands/`:
 
 ```
 mkdir -p .claude/commands && cp commands/*.md .claude/commands/

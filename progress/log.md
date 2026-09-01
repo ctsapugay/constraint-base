@@ -17,6 +17,7 @@ reader: state, not narrative.
 - **next:** what the next session should pick up
 - **decisions:** choices made and why, including assumptions made without asking
 - **approvals:** anything Clara explicitly approved this session, quoted
+- **proposals:** any proposal raised this session, and its status
 - **dead ends:** what was tried and abandoned, so it is not retried
 ```
 
