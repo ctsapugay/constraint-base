@@ -151,6 +151,7 @@ Write a proposal. Do not edit. See the second rule above and `docs/governance.md
 | `tools/brief.py` | Constraints + goal + pending proposals + progress. Your re-grounding call. |
 | `tools/status.py` | One-screen progress readout; `--html` renders the phone dashboard. |
 | `tools/board_server.py` | Serves the dashboard live on localhost, auto-refreshing in a browser. |
+| `tools/board_watch.py` | Blocks until the board state changes — the signal behind `/board watch`. |
 | `tools/verify.py` | Runs the check suite, records results, reports whether the gate is green. |
 | `tools/validate.py` | Checks the above are well-formed, outcome-shaped, and unmodified. |
 | `tools/approve.py` | Clara's. Approving, declining, re-baselining, waiving checks. Yours only when she delegates it. |

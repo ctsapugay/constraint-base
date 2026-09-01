@@ -195,6 +195,7 @@ tools/
   brief.py
   status.py               one-screen progress readout; --html renders the dashboard
   board_server.py         serves the dashboard live on localhost, auto-refreshing
+  board_watch.py          blocks until board state changes (drives /board watch)
   verify.py               runs the check suite; the completion gate
   validate.py
   approve.py
