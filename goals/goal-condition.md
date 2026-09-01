@@ -21,6 +21,14 @@ _Not yet drafted._
 
 ## What completion requires
 
+This project is carried out **within** the constraint system, not alongside it. Throughout
+the run the agent stays bound by every constraint in `constraints/` and works the way
+`CLAUDE.md` describes — re-grounding with `tools/brief.py`, recording evidence, surfacing
+outcome-changing ambiguity to Clara, and changing nothing governed (a constraint, a
+criterion, a check, the goal condition) except through a proposal Clara approved. Reaching
+the criteria by ignoring the constraint system, violating a constraint, or bypassing
+governance is **not** "done".
+
 The task is complete only when **all** of the following hold, and the work is judged
 **only** against these. None may be softened, removed, or reinterpreted except through the
 governance process in `docs/governance.md`.
