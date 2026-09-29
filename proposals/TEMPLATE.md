@@ -6,8 +6,8 @@ Numbering is sequential; take the next unused number.
 A proposal is a request, not a change. Writing one does nothing on its own — that is the
 point. The constraint you are asking about stays fully in force until Clara approves.
 
-Never set `status: approved` yourself. Approval is recorded by `tools/approve.py`, which
-Clara runs, in a commit that says `APPROVED: P-000N`. `tools/validate.py` cross-checks
+Never set `status: approved` yourself. Clara approves in chat; only then is it recorded by
+`tools/approve.py --chat "<her words>"`, in a commit that says `APPROVED: P-000N`. `tools/validate.py` cross-checks
 the two and reports a mismatch as an error.
 
 ```

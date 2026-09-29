@@ -110,7 +110,7 @@ that meets every criterion will keep finding things to improve.
 Clara approves or edits before goal mode starts. An unapproved goal condition
 (`state: draft`) means intake is not finished, and `tools/validate.py` will say so.
 
-Once she approves, `python3 tools/approve.py --baseline` engages governance and the goal
+Once she approves it in chat, recording that with `approve.py --baseline --chat` engages governance and the goal
 condition stops being the agent's to edit. Criterion `state:` and `evidence:` stay
 freely updatable — those are progress, not the finish line.
 

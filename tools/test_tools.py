@@ -282,8 +282,8 @@ class IntegrationTests(unittest.TestCase):
         )
 
     def _baseline(self):
-        # No tty in a subprocess, so approve via the delegated path.
-        r = self._run("approve.py", "--baseline", "--on-behalf-of-clara", "approve baseline")
+        # No tty in a subprocess, so approve via the chat path.
+        r = self._run("approve.py", "--baseline", "--chat", "approve baseline")
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
         self._git("add", "-A")  # sweep in anything the tool left uncommitted
         self._git("commit", "-q", "-m", "post-baseline tidy")
@@ -318,13 +318,31 @@ class IntegrationTests(unittest.TestCase):
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
         self.assertIn("Governance engaged", r.stdout)
 
-    def test_delegated_approval_is_flagged(self):
+    def test_chat_approval_is_recorded_and_listed(self):
         self._baseline()
         r = self._run("validate.py")
-        self.assertIn("AGENT-EXECUTED", r.stdout)
-        # and the authority text was recorded in the commit body
+        self.assertIn("given in chat", r.stdout)
+        self.assertIn('Clara: "approve baseline"', r.stdout)
+        # her words, a timestamp, and the session are on the commit...
         log = self._git("log", "--format=%B").stdout
-        self.assertIn("ON-BEHALF-OF-CLARA", log)
+        self.assertIn('APPROVED-IN-CHAT: "approve baseline"', log)
+        self.assertIn("APPROVED-AT: ", log)
+        # ...and in the committed ledger.
+        ledger = (self.dir / "governance/approvals.md").read_text(encoding="utf-8")
+        self.assertIn("> approve baseline", ledger)
+        self.assertIn("**when:**", ledger)
+        self.assertEqual(self._git("status", "--porcelain", "governance").stdout, "")
+
+    def test_old_on_behalf_flag_still_works(self):
+        r = self._run("approve.py", "--baseline", "--on-behalf-of-clara", 'she said "yes"')
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        v = self._run("validate.py")
+        self.assertIn('Clara: "she said "yes""', v.stdout)
+
+    def test_approval_without_chat_or_terminal_refuses(self):
+        r = self._run("approve.py", "--baseline")
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("no chat approval given", r.stdout)
 
     def test_constraint_edit_is_drift(self):
         self._baseline()
@@ -441,7 +459,7 @@ class IntegrationTests(unittest.TestCase):
         self.assertIn("not countersigned", r.stdout)
         # Now countersign it, and the error clears.
         r2 = self._run("approve.py", "--waive-check", "CHK-002", "not needed for the test",
-                       "--on-behalf-of-clara", "ok")
+                       "--chat", "ok")
         self.assertEqual(r2.returncode, 0, r2.stdout + r2.stderr)
         self._git("add", "-A"); self._git("commit", "-q", "-m", "tidy")
         r3 = self._run("validate.py")
@@ -469,7 +487,7 @@ class IntegrationTests(unittest.TestCase):
         self._git("commit", "-q", "-m", "enable signing")
 
         self.assertEqual(
-            self._run("approve.py", "--baseline", "--on-behalf-of-clara", "ok").returncode, 0)
+            self._run("approve.py", "--baseline", "--chat", "ok").returncode, 0)
         self._write("proposals/P-0001-x.md", textwrap.dedent("""\
             ## P-0001 — test waiver
             - **status:** proposed
@@ -480,13 +498,40 @@ class IntegrationTests(unittest.TestCase):
             - **risk:** Only here to exercise a signed approval commit.
             - **approved:**
             """))
-        r = self._run("approve.py", "P-0001", "--on-behalf-of-clara", "ok")
+        r = self._run("approve.py", "P-0001", "--chat", "ok")
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
 
         v = self._run("validate.py")
         self.assertNotIn("unsigned", v.stdout)
         self.assertEqual(v.returncode, 0, v.stdout)
         self.assertIn("signed", v.stdout)
+
+    def test_chat_approval_survives_unusable_signing_key(self):
+        # Signing is on but the key can't be used (e.g. a passphrase nobody is there to
+        # type). Approving from chat must still work, and validate must not error on it.
+        self._write("governance/allowed_signers", "test@example.com ssh-ed25519 AAAA\n")
+        self._git("config", "gpg.format", "ssh")
+        self._git("config", "user.signingkey", str(self.dir / "no-such-key.pub"))
+        self._git("add", "-A")
+        self._git("commit", "-q", "--no-gpg-sign", "-m", "enable signing")
+        self.assertEqual(
+            self._run("approve.py", "--baseline", "--chat", "approve the baseline").returncode, 0)
+        self._write("proposals/P-0001-x.md", textwrap.dedent("""\
+            ## P-0001 — test waiver
+            - **status:** proposed
+            - **kind:** waiver
+            - **targets:** C-EVIDENCE
+            - **because:** A long enough explanation so approve.py accepts it in this test.
+            - **change:** Would waive C-EVIDENCE; not actually applied here.
+            - **risk:** Only here to exercise an unsigned chat approval.
+            - **approved:**
+            """))
+        r = self._run("approve.py", "P-0001", "--chat", "yes, approve P-0001")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertIn("committing the chat approval unsigned", r.stdout)
+        v = self._run("validate.py")
+        self.assertEqual(v.returncode, 0, v.stdout)
+        self.assertIn("chat approval of P-0001 is unsigned", v.stdout)
 
     def test_completion_gate_blocks_met_goal(self):
         # Goal claimed met and its one criterion has evidence, but the checks were

@@ -63,8 +63,13 @@ GOVERNED_TOOLS = (
 )
 
 APPROVAL_TOKEN_RE = re.compile(r"\bAPPROVED:\s*([Pp]-\d{3,5}(?:\s*,\s*[Pp]-\d{3,5})*|BASELINE)\b")
-# Marks an approval the agent executed on Clara's explicitly stated authority.
-ON_BEHALF_RE = re.compile(r'ON-BEHALF-OF-CLARA:\s*"?(?P<text>[^"\n]*)"?')
+# Marks an approval Clara gave in chat, which the agent recorded and executed. Her
+# words are quoted verbatim on one line; the older ON-BEHALF-OF-CLARA trailer is still
+# read so history from before the rename keeps validating.
+ON_BEHALF_RE = re.compile(
+    r'^(?:APPROVED-IN-CHAT|ON-BEHALF-OF-CLARA):[ \t]*"?(?P<text>.*?)"?[ \t]*$', re.MULTILINE
+)
+APPROVED_AT_RE = re.compile(r"^APPROVED-AT:[ \t]*(?P<at>\S+)[ \t]*$", re.MULTILINE)
 # Clara's countersignature accepting a failing/skipped check. Like a waiver, it only
 # takes effect through this commit token, so an un-countersigned check-waiver still binds.
 CHECK_WAIVER_RE = re.compile(r"\bWAIVED-CHECK:\s*(CHK-[A-Za-z0-9-]+(?:\s*,\s*CHK-[A-Za-z0-9-]+)*)\b")
@@ -572,7 +577,8 @@ class ApprovalCommit:
     signature: str  # git's %G? code: G good, U good/untrusted, B bad, N none, E error
     subject: str
     ids: list[str]
-    on_behalf: str | None = None  # set when the agent approved on Clara's stated authority
+    on_behalf: str | None = None  # Clara's words, when she approved in chat
+    approved_at: str | None = None  # timestamp recorded with a chat approval
 
     @property
     def signed_ok(self) -> bool:
@@ -611,6 +617,7 @@ def approval_commits() -> list[ApprovalCommit]:
         if ids:
             on_behalf_match = ON_BEHALF_RE.search(body)
             on_behalf = on_behalf_match.group("text").strip() if on_behalf_match else None
+            at_match = APPROVED_AT_RE.search(body)
             commits.append(
                 ApprovalCommit(
                     sha=sha[:12],
@@ -619,6 +626,7 @@ def approval_commits() -> list[ApprovalCommit]:
                     subject=subject,
                     ids=ids,
                     on_behalf=on_behalf,
+                    approved_at=at_match.group("at") if at_match else None,
                 )
             )
     return commits

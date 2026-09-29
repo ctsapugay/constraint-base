@@ -489,7 +489,15 @@ def check_governance(report: Report) -> None:
                     code, _ = git(
                         "cat-file", "-e", f"{commit.sha}:governance/allowed_signers"
                     )
-                    if code == 0:
+                    if code == 0 and commit.on_behalf is not None:
+                        # Signing is optional for chat approvals; approve.py falls back
+                        # to unsigned when the key can't be used unattended.
+                        report.warn(
+                            f"governance ({commit.sha})",
+                            f"chat approval of {pid} is unsigned. It is still listed "
+                            "below with Clara's words for her to confirm.",
+                        )
+                    elif code == 0:
                         report.error(
                             f"governance ({commit.sha})",
                             f"approval of {pid} is unsigned, but signature "
@@ -525,23 +533,17 @@ def check_governance(report: Report) -> None:
                     "outside the approval path.",
                 )
 
-    # 3b. Which approvals did the agent execute on Clara's stated authority?
-    #     These are sanctioned, but they are the path a rogue agent would use, so
-    #     surface every one for review rather than letting them blend in.
+    # 3b. Which approvals were given in chat? They are the normal path, but the agent
+    #     writes the record, so list every one for Clara to confirm she said it.
     delegated = [c for c in commits if c.on_behalf is not None]
     if delegated:
         report.note(
-            f"{len(delegated)} approval(s) were AGENT-EXECUTED on Clara's stated "
-            "authority (not run by Clara directly). Confirm you authorized each:"
+            f"{len(delegated)} approval(s) given in chat (recorded by the agent; full "
+            "record in governance/approvals.md). Confirm you said each:"
         )
         for c in delegated:
-            report.note(f'    {c.sha} {", ".join(c.ids)} -- authority: "{c.on_behalf}"')
-        if not signing_configured():
-            report.note(
-                "    Attribution mode: the authority text is written by the agent, so "
-                "these are an audit trail, not proof. Enable signing to make delegated "
-                "approval un-forgeable."
-            )
+            when = f" at {c.approved_at}" if c.approved_at else ""
+            report.note(f'    {c.sha} {", ".join(c.ids)}{when} -- Clara: "{c.on_behalf}"')
 
     # 4. Uncommitted changes to governed files hide from history entirely.
     code, out = git("status", "--porcelain", "--", *GOVERNED_PATHS)

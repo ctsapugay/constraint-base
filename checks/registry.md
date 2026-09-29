@@ -19,8 +19,8 @@ constraint.
 - **run:** the shell command verify.py runs; exit 0 means pass, any nonzero means fail
 - **status:** active | waived
 - **waived:** required only when waived — the reason it is acceptable for this not to pass
-- **waived-by:** required only when waived — countersigned by Clara via
-  `python3 tools/approve.py --waive-check CHK-001 "reason"`
+- **waived-by:** required only when waived — Clara approves it in chat, and that is
+  recorded with `approve.py --waive-check CHK-001 "reason" --chat "<her words>"`
 ```
 
 Marking a check `waived` by hand has **no effect on its own**: the check keeps binding

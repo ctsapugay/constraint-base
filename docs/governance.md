@@ -53,7 +53,8 @@ The digest deliberately excludes each criterion's `state:` and `evidence:`, and 
 goal's own `state:`. Those change constantly during normal work. The finish line is
 governed; progress against it is not.
 
-**Approval is a commit.** `tools/approve.py` is Clara's command. It stamps the proposal,
+**Approval is given in chat and recorded as a commit.** Clara says she approves; the agent
+then runs `tools/approve.py --chat "<her words>"`. It stamps the proposal,
 re-records the baseline, and commits with `APPROVED: P-000N` in the message.
 `validate.py` then checks, against git history:
 
@@ -69,57 +70,64 @@ re-records the baseline, and commits with `APPROVED: P-000N` in the message.
    being protected if approved. Then it keeps working inside the existing constraint, or
    stops and says it is blocked. It does not edit anything governed.
 3. `brief.py` surfaces the proposal on every re-grounding, so neither of you forgets it.
-4. Clara reads it: `python3 tools/approve.py --status`.
-5. If she agrees, she makes the edit (or has the agent make it and reviews `git diff`),
-   then runs `python3 tools/approve.py P-000N`. If she doesn't:
-   `python3 tools/approve.py --decline P-000N`.
+4. The agent tells Clara what the proposal changes and what stops being protected.
+5. If she agrees, she says so in chat ("approve P-000N"). The agent makes the edit and
+   records the approval with `approve.py P-000N --chat "<her words>"`. If she declines,
+   the agent runs `approve.py --decline P-000N`.
 6. Governance re-baselines, and the new state is what binds from then on.
 
-Governance engages when Clara runs `tools/approve.py --baseline`, which requires the goal
+Governance engages when Clara approves the baseline in chat (recorded with
+`approve.py --baseline --chat`), which requires the goal
 condition to be approved. Before that — during intake — everything is fluid, which is
 correct: there is no agreed finish line yet to protect.
 
-## Delegated approval
+## Approving in chat
 
-Clara does not have to type the approval command herself every time. She can tell the
-agent, in the session, to run it for her — "yes, approve P-0001" — and the agent runs:
+Clara approves by saying so in chat. There is no command for her to run. Nothing is
+approved until she explicitly does: she names the thing ("approve P-0001", "approve the
+baseline", "waive CHK-003"), or says "yes" in direct reply to a question that named it.
+Anything vaguer — "sounds good", "ok", approving a plan in general — is not approval of a
+governed change, and the agent asks rather than assuming.
+
+Once she has, the agent records it:
 
 ```
-python3 tools/approve.py P-0001 --on-behalf-of-clara "yes, approve P-0001"
+python3 tools/approve.py P-0001 --chat "approve P-0001"
 ```
 
-This does three things beyond a normal approval:
+Every chat approval is written down, with what was approved, the timestamp, the session
+ID, and her words verbatim:
 
-- it writes her authorization verbatim into the commit body as `ON-BEHALF-OF-CLARA: "…"`;
-- it appends a dated entry to `progress/log.md` recording the delegation;
-- it makes `validate.py` list the approval, on every run, as **agent-executed on Clara's
-  stated authority**, so she can confirm she actually said so.
+- as an entry in `governance/approvals.md`, the append-only ledger of chat approvals;
+- as trailers on the approval commit (`APPROVED-IN-CHAT`, `APPROVED-AT`, `SESSION`);
+- as a line in `progress/log.md`.
 
-Be clear-eyed about what this is and is not. It converts approval from something only
-Clara's hands can do into something the agent can do **on her explicit say-so** — and it
-makes every such approval loud, logged, and flagged rather than silent. That directly
-addresses the failure mode at the top of this document: an agent *quietly* moving the bar.
-What it does **not** do, in attribution mode, is prove the authorization was real. The
-agent writes the quote; a determined agent could fabricate it, exactly as it could forge a
-commit author. Delegation makes a dishonest approval visible and reviewable; it does not
-make it impossible.
+`validate.py` lists every chat approval, with her words and the time, on every run, so she
+can confirm each one was really hers.
 
-The old `--yes` flag, which approved with no authorization trail at all, has been removed.
-Approval now has exactly two shapes: Clara at a terminal typing `approve`, or the agent
-with `--on-behalf-of-clara "<her words>"`. In a non-interactive context with neither,
-`approve.py` refuses.
+Be clear-eyed about what this is: the record is written by the agent, so it is an audit
+trail, not proof. A determined agent could fabricate a quote. What it rules out is a
+*quiet* self-approval — the failure mode at the top of this document — because every
+approval is loud, quoted, timestamped, committed, and listed for review. The rules in
+`CLAUDE.md` bind the agent to record only approvals Clara actually gave in her own
+messages this session.
 
-**What makes delegation un-forgeable** is signing with a key the agent cannot use (below).
-With signing on, an `--on-behalf-of-clara` approval still has to carry a signature that
-only Clara's key produces, so the agent can prepare the approval but cannot complete it
-without her. Note the practical cost: a signing-key passphrase prompt appears in the local
-terminal and does not forward to a phone, so un-forgeable approval means Clara is at the
-machine, not approving from Remote Control.
+Either session can record an approval Clara gave it — the worker, or the observer she
+talks to from her phone. The observer's only write is this; `CLAUDE.md` gives it extra
+rules because the worker is live in the same directory: it will not record while other
+governed changes are pending, since recording would approve those too.
 
-## Turning on signing (recommended)
+If `approve.py` is run at a terminal without `--chat`, it asks for `approve` to be typed
+instead. With neither, it refuses. `--on-behalf-of-clara` is the older name for `--chat`
+and still works.
 
-Attribution mode identifies approvals by commit author email, which anything with repo
-access can set. Signing raises the bar a lot:
+## Signing (optional)
+
+Signing is optional and never stands between Clara and approving in chat. When it is on,
+`approve.py` signs automatically; if the key can't be used unattended (for example it needs
+a passphrase nobody is there to type), a chat approval is committed unsigned instead and
+`validate.py` warns rather than erroring. Signing still catches approval commits made
+outside `approve.py`. To turn it on:
 
 ```
 # use your own signing key path in place of the example below
@@ -141,7 +149,8 @@ Once `governance/allowed_signers` exists, `approve.py` signs automatically and
 
 - errors on an approval commit whose signature does not verify
 - errors on an *unsigned* approval commit made at a point where `allowed_signers` was
-  already in the tree — i.e. an approval that bypassed `approve.py`
+  already in the tree — i.e. an approval that bypassed `approve.py` (an unsigned chat
+  approval is a warning, not an error)
 - warns, rather than errors, on approvals that predate signing being turned on, since
   those genuinely cannot be verified. Re-approve them if you want a clean report.
 - errors if `allowed_signers` was ever present and has since been deleted, so quietly
@@ -174,9 +183,8 @@ is no sandbox here, and this document is not going to pretend otherwise.
   `bash tools/selfcheck.sh`, which uses git alone (no repo Python) to diff the tools and
   governed files against the last approved commit, or run `git diff` against a known-good
   commit yourself.
-- The authenticity of a delegated approval in attribution mode. `validate.py` flags every
-  `--on-behalf-of-clara` approval for review and records the stated authority, but cannot
-  prove the agent was actually told to run it. Signing closes this; see below.
+- The authenticity of a chat approval. `validate.py` lists every one with Clara's quoted
+  words and timestamp for her review, but cannot prove she actually said them.
 
 **Not enforced at all in attribution mode:**
 
@@ -185,12 +193,10 @@ is no sandbox here, and this document is not going to pretend otherwise.
   forged approval is a visible commit, in history, pushed to GitHub, with a timestamp —
   but it does not stop the forgery.
 
-Signing closes that last one properly: an unsigned approval made while signing is in
-force is an error, not a warning, so forging authorship no longer works. The remaining
-gap is the key itself. If your signing key sits unencrypted at `~/.ssh/id_ed25519` and
-the agent has a shell on the same machine, it can sign as you. A passphrase-protected
-key held in the agent, or a hardware key, is what actually closes it — and at that point
-you are relying on your key hygiene, not on this repository.
+Signing narrows this for approvals made outside `approve.py`: an unsigned one made while
+signing is in force is an error. It does not change the trust model for chat approvals —
+those rest on the recorded quote and Clara's review of it, which is the trade made for
+approving without leaving the chat.
 
 **The honest summary:** governance makes the sanctioned path easy, makes unsanctioned
 changes visible, and makes one specific category — waivers — structurally impossible to
@@ -207,4 +213,5 @@ self-grant. It does not make an agent unable to modify files it can write to. Tr
 | `governance/baseline.txt` | Digest of approved content + approved proposal ids. Written only by `approve.py`. |
 | `governance/approvers.txt` | Whose commits count as approvals. |
 | `governance/allowed_signers` | Optional. Enables signature verification. |
-| `tools/approve.py` | Clara's command. Approve, decline, re-baseline, check status. |
+| `tools/approve.py` | Records an approval Clara gave in chat. Approve, decline, re-baseline, waive a check, status. |
+| `governance/approvals.md` | Every chat approval: what, when, which session, her exact words. Written only by `approve.py`. |

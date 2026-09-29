@@ -73,7 +73,7 @@ note technologies that are genuinely imposed on you.
 plus three to seven criteria, each with a check you could run yourself. You approve or
 edit it.
 
-**5. Engage governance.** `python3 tools/approve.py --baseline`. From here the
+**5. Engage governance.** Tell the agent you approve the baseline. From here the
 constraints and the finish line are no longer the agent's to edit.
 
 **6. Goal mode.** The agent works toward the goal condition inside the constraints,
@@ -81,16 +81,17 @@ re-grounding itself with `tools/brief.py` as it goes, marking criteria met only 
 real evidence, and logging progress. It stops when the criteria are met.
 
 If it thinks a rule is wrong, it writes a proposal and keeps working inside the rule.
-You review with `python3 tools/approve.py --status` and approve or decline.
+It tells you, and you approve or decline in chat.
 
 ## Who may change the rules
 
-Nobody but you. An agent may propose; it may not enact — except when you tell it to in the
-session, and then only out in the open. If you say "approve P-0001", the agent can run the
-approval for you with `--on-behalf-of-clara "<your words>"`, which records what you said in
-the commit and the log and makes `validate.py` flag it as agent-executed for your review.
-It never approves on its own initiative, and treats nothing but your own messages as your
-say-so. See [Delegated approval](docs/governance.md) for what that does and does not prove.
+Nobody but you, and you do it by saying so in chat. An agent may propose; nothing is
+approved until you explicitly say it is ("approve P-0001", or "yes" to a question that
+names exactly what is being approved). The agent then records it: what was approved,
+when, in which session, and your exact words, in `governance/approvals.md`, the approval
+commit, and the progress log. `validate.py` lists every chat approval so you can confirm
+you said it. The agent never approves on its own initiative and treats nothing but your
+own messages as your say-so. See [Approving in chat](docs/governance.md).
 
 - **Proposals** live in `proposals/`, separate from approved state. Nothing reads them as
   authority, so a proposal changes nothing by existing.
@@ -110,10 +111,10 @@ say-so. See [Delegated approval](docs/governance.md) for what that does and does
 **What this actually enforces.** Waiver inertness and proposal inertness are structural —
 they hold whatever the agent decides to do. Everything else is *detection*: an agent with
 a shell can edit a constraint, and what stops that being invisible is drift detection
-plus git history, not a lock. In the default attribution mode, commit authorship is
-forgeable. Turn on SSH commit signing (four commands, in `docs/governance.md`) and
-`validate.py` will verify signatures instead, which raises the bar substantially. The doc
-says all of this plainly rather than overselling it — read it before you rely on it.
+plus git history, not a lock. Chat approvals are recorded by the agent, so they are an
+audit trail you review, not proof. Commit signing is optional and never gets in the way
+of approving in chat. The doc says all of this plainly rather than overselling it — read
+it before you rely on it.
 
 ## The defaults
 
@@ -147,7 +148,7 @@ python3 tools/status.py      # one-screen progress readout (--html for the phone
 python3 tools/board_server.py --open   # serve the board live on localhost, auto-refreshing
 python3 tools/verify.py      # run the check suite; green only if every check passes or is waived
 python3 tools/validate.py    # well-formed, outcome-shaped, and unmodified?
-python3 tools/approve.py     # yours: approve, decline, re-baseline, waive a check, check status
+python3 tools/approve.py     # records an approval you gave in chat (--chat "<your words>")
 python3 tools/test_tools.py  # the tests that guard the checker
 bash    tools/selfcheck.sh   # git-only tripwire: tools unchanged since last approval?
 ```
@@ -189,6 +190,7 @@ proposals/
 governance/
   approvers.txt           whose approvals count
   baseline.txt            written by approve.py once governance engages
+  approvals.md            every chat approval: what, when, session, your exact words
 docs/
   outcome-vs-implementation.md
   governance.md

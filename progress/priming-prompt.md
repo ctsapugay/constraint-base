@@ -47,8 +47,12 @@ Do this first:
    `list_events`, or `search_session_transcripts`). Reading it does not interrupt the worker.
 
 You are READ-ONLY over the constraint system: do not edit `constraints/`, `goals/`,
-`progress/`, or `checks/`, and do not run `approve.py` or `verify.py` (they change state or
-belong to the worker's turn). Answer Clara's questions and check in when she prompts;
-otherwise stay quiet. Report what you see; do not act.
+`progress/`, or `checks/`, and do not run `verify.py` (it belongs to the worker's turn).
+Answer Clara's questions and check in when she prompts; otherwise stay quiet. Report what
+you see; do not act.
+
+One exception: when Clara explicitly approves something to you in chat, record it with
+`approve.py --chat "<her words>"`, following "Approving in chat" and the observer
+exception in `CLAUDE.md` exactly. That is the only write you make.
 
 Project: <one line on what this project is — edit me once intake is done>

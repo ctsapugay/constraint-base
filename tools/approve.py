@@ -1,30 +1,26 @@
 #!/usr/bin/env python3
-"""Clara's approval command. Records what she has signed off on.
+"""Records what Clara has signed off on.
 
-    python3 tools/approve.py --status          # pending proposals and any drift
-    python3 tools/approve.py --baseline        # engage governance (end of intake)
-    python3 tools/approve.py P-0001 [P-0002]   # approve proposals, re-record baseline
-    python3 tools/approve.py --decline P-0001  # decline a proposal
-    python3 tools/approve.py --waive-check CHK-001 "reason"   # countersign a failing check
+Clara normally approves in chat. She tells the agent "approve P-0001" (or "yes" to a
+question naming exactly what is being approved), and the agent runs this with her words:
 
-This script is FOR CLARA. It is not a lock -- anything with a shell can run it. What it
-does is make approval a deliberate, recorded, committed act, so that an approval which
-was not hers is visible in git history afterwards rather than invisible. If you want
-approval that an agent cannot fabricate, turn on commit signing; see docs/governance.md.
+    python3 tools/approve.py --baseline          --chat "<her message, verbatim>"
+    python3 tools/approve.py P-0001 [P-0002]     --chat "<her message, verbatim>"
+    python3 tools/approve.py --waive-check CHK-001 "reason" --chat "<her message>"
+    python3 tools/approve.py --decline P-0001
+    python3 tools/approve.py --status
 
-Delegated approval. Clara can let the agent run an approval in her stead, but only when
-she has said so explicitly in the session. The agent passes what she said:
+Every chat approval is written down in three places: an entry in governance/approvals.md
+(what was approved, when, in which session, and her exact words), the same details as
+trailers on the approval commit (APPROVED-IN-CHAT / APPROVED-AT / SESSION), and a line in
+progress/log.md. validate.py lists every chat approval so she can confirm each one.
 
-    python3 tools/approve.py P-0001 --on-behalf-of-clara "yes, approve P-0001"
+Run at a terminal with no --chat, it asks her to type 'approve' instead. With neither a
+terminal nor --chat it refuses. (--on-behalf-of-clara is the older name for --chat.)
 
-That records her words in the commit body (ON-BEHALF-OF-CLARA: ...) and appends an entry
-to progress/log.md, and validate.py flags every such approval as agent-executed so she
-can review them. In attribution mode this is an honest audit trail, not proof: the agent
-writes the quote, so a determined agent could fabricate it -- what it prevents is a
-*quiet* self-approval, which is the failure mode governance exists to catch. For approval
-the agent genuinely cannot fabricate, turn on signing with a key it cannot use (see
-docs/governance.md); then --on-behalf-of-clara still needs a signature only Clara's key
-produces.
+What this is and is not: the record is written by the agent, so it is an audit trail, not
+proof. It stops a *quiet* self-approval -- the failure mode governance exists to catch --
+by making every approval loud, quoted, timestamped, and in git history.
 
 Standard library only.
 """
@@ -32,6 +28,7 @@ Standard library only.
 from __future__ import annotations
 
 import datetime as _dt
+import os
 import re
 import sys
 from pathlib import Path
@@ -57,6 +54,13 @@ from constraint_files import (  # noqa: E402
 )
 
 TODAY = _dt.date.today().isoformat()
+APPROVALS_FILE = GOVERNANCE_DIR / "approvals.md"
+APPROVALS_HEADER = """# Approvals given in chat
+
+Append-only. Written by tools/approve.py each time Clara approves something in chat:
+what was approved, when, in which session, and her words verbatim. Do not hand-edit.
+validate.py lists every chat approval so Clara can confirm she said it.
+"""
 
 
 def _fail(msg: str) -> int:
@@ -67,16 +71,14 @@ def _fail(msg: str) -> int:
 def _confirm(prompt: str, on_behalf: str | None) -> bool:
     if on_behalf is not None:
         print(prompt)
-        print("  Delegated approval, executed by the agent on Clara's stated authority:")
+        print("  Approved by Clara in chat:")
         print(f'    "{on_behalf}"')
-        print("  Recorded in the commit and in progress/log.md, and flagged by")
-        print("  validate.py as agent-executed. This is NOT Clara running it herself.")
+        print("  Recorded in governance/approvals.md, the commit, and progress/log.md.")
         return True
     if not sys.stdin.isatty():
         print(
-            f"{prompt}\n  x Refusing: no terminal, and no delegated authority given.\n"
-            '    Run this yourself at a terminal, or pass'
-            ' --on-behalf-of-clara "<what Clara said>".'
+            f"{prompt}\n  x Refusing: no terminal, and no chat approval given.\n"
+            '    Pass --chat "<Clara\'s message, verbatim>" once she has approved in chat.'
         )
         return False
     try:
@@ -87,18 +89,35 @@ def _confirm(prompt: str, on_behalf: str | None) -> bool:
     return answer == "approve"
 
 
-def _append_log(first_line: str, on_behalf: str) -> None:
-    """Record a delegated approval in progress/log.md so it is never silent."""
+def _one_line(text: str) -> str:
+    return " ".join(text.split())
+
+
+def _record_chat_approval(first_line: str, on_behalf: str, at: str, session: str) -> None:
+    """Write the chat approval to the ledger and the progress log so it is never silent."""
+    quote = "\n".join(f"> {line}" for line in on_behalf.splitlines() or [""])
     entry = (
-        f"\n## {TODAY} — Delegated approval (agent-executed)\n\n"
-        f"- {first_line}\n"
-        f'- Clara\'s stated authority, verbatim: "{on_behalf}"\n'
-        "- Attribution mode makes this an audit record, not proof the authority was "
-        "real. Enable signing (docs/governance.md) for approval the agent cannot forge.\n"
+        f"\n## {at} — {first_line}\n\n"
+        f"- **approved:** {first_line}\n"
+        f"- **when:** {at}\n"
+        f"- **session:** {session}\n"
+        f"- **Clara said:**\n\n{quote}\n"
     )
     try:
-        with LOG_FILE.open("a", encoding="utf-8") as fh:
+        new = not APPROVALS_FILE.exists()
+        with APPROVALS_FILE.open("a", encoding="utf-8") as fh:
+            if new:
+                fh.write(APPROVALS_HEADER)
             fh.write(entry)
+    except OSError as exc:
+        print(f"  ! Could not append to governance/approvals.md: {exc}")
+    try:
+        with LOG_FILE.open("a", encoding="utf-8") as fh:
+            fh.write(
+                f"\n## {TODAY} — Approved in chat: {first_line}\n\n"
+                f'- Clara said, at {at}: "{_one_line(on_behalf)}"\n'
+                "- Full record: governance/approvals.md.\n"
+            )
     except OSError as exc:
         print(f"  ! Could not append to progress/log.md: {exc}")
 
@@ -173,9 +192,15 @@ def _commit(message: str, on_behalf: str | None) -> int:
     first_line = message.splitlines()[0]
     paths = ["constraints", "goals", "governance", "proposals", "checks"]
     if on_behalf is not None:
-        message = message + f'\n\nON-BEHALF-OF-CLARA: "{on_behalf}"'
-        _append_log(first_line, on_behalf)
-        paths.append("progress")  # so the audit entry rides along in the same commit
+        at = _dt.datetime.now().astimezone().isoformat(timespec="seconds")
+        session = os.environ.get("CLAUDE_CODE_SESSION_ID") or "unknown"
+        message += (
+            f'\n\nAPPROVED-IN-CHAT: "{_one_line(on_behalf)}"'
+            f"\nAPPROVED-AT: {at}"
+            f"\nSESSION: {session}"
+        )
+        _record_chat_approval(first_line, on_behalf, at, session)
+        paths.append("progress")  # so the log entry rides along in the same commit
 
     if not in_git_repo():
         print("  ! Not a git repository. Baseline written, but not committed.")
@@ -186,19 +211,20 @@ def _commit(message: str, on_behalf: str | None) -> int:
         code, out = git("add", *existing)
         if code != 0:
             return _fail(f"git add failed: {out}")
-    args = ["commit", "-m", message]
-    if signing_configured():
-        args.insert(1, "-S")
-    code, out = git(*args)
+    signed = signing_configured()
+    code, out = git("commit", *(["-S"] if signed else []), "-m", message)
+    if code != 0 and signed and on_behalf is not None:
+        # Signing is a bonus, never a gate on approving from chat: if the key needs a
+        # passphrase nobody is there to type, record the approval unsigned instead.
+        print("  ! Signing failed; committing the chat approval unsigned instead.")
+        signed = False
+        code, out = git("-c", "commit.gpgsign=false", "commit", "-m", message)
     if code != 0:
         return _fail(f"git commit failed: {out}")
     print(f"  Committed: {first_line}")
     if on_behalf is not None:
-        print("  Recorded as agent-executed on Clara's stated authority.")
-    if signing_configured():
-        print("  Signed. validate.py will verify it against governance/allowed_signers.")
-    else:
-        print("  Unsigned -- attribution only. See docs/governance.md to strengthen this.")
+        print("  Recorded as a chat approval in governance/approvals.md.")
+    print("  Signed." if signed else "  Unsigned -- attribution only.")
     return 0
 
 
@@ -371,17 +397,20 @@ def cmd_waive_check(check_id: str, reason: str, on_behalf: str | None) -> int:
 
 def main(argv: list[str]) -> int:
     on_behalf: str | None = None
-    if "--on-behalf-of-clara" in argv:
-        i = argv.index("--on-behalf-of-clara")
+    for flag in ("--chat", "--on-behalf-of-clara"):
+        if flag not in argv:
+            continue
+        i = argv.index(flag)
         if i + 1 >= len(argv) or argv[i + 1].startswith("--"):
             return _fail(
-                'The --on-behalf-of-clara flag needs the authorization text, e.g.\n'
-                '    python3 tools/approve.py P-0001 --on-behalf-of-clara "yes, approve P-0001"'
+                f'{flag} needs Clara\'s message, verbatim, e.g.\n'
+                '    python3 tools/approve.py P-0001 --chat "yes, approve P-0001"'
             )
         on_behalf = argv[i + 1].strip()
         if not on_behalf:
-            return _fail("--on-behalf-of-clara was given empty authorization text.")
+            return _fail(f"{flag} was given an empty message.")
         argv = argv[:i] + argv[i + 2 :]
+        break
 
     args = argv
 
